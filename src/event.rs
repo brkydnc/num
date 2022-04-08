@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_repr::*;
 
-#[derive(Clone, Copy, Serialize_repr, Deserialize_repr)]
+#[derive(Clone, Copy, Debug, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
 #[non_exhaustive]
 pub enum EventKind {
@@ -10,7 +10,7 @@ pub enum EventKind {
     JoinLobby,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Event {
     pub kind: EventKind,
     #[serde(skip_serializing_if = "Option::is_none")]
