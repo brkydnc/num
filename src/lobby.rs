@@ -17,9 +17,10 @@ impl Lobby {
         Self { clients: (None, None) }
     }
 
-    async fn handle_lobby<F>(mut receiver: Receiver<Client>, on_client_release: F)
+    async fn handle_lobby<D, R>(mut receiver: Receiver<Client>, on_destroyed: D, on_client_release: R)
     where
-        F: Fn(Client) + Send + 'static,
+        D: FnOnce() + Send + 'static,
+        R: Fn(Client) + Send + 'static,
     {
         let mut lobby = Self::new();
 
@@ -47,14 +48,17 @@ impl Lobby {
                 else => {},
             }
         }
+
+        on_destroyed()
     }
 
-    pub fn spawn_handler<F>(on_client_release: F) -> Sender<Client>
+    pub fn spawn_handler<D, R>(on_destroyed: D, on_client_release: R) -> Sender<Client>
     where
-        F: Fn(Client) + Send + 'static,
+        D: FnOnce() + Send + 'static,
+        R: Fn(Client) + Send + 'static,
     {
         let (sender, receiver) = channel(2);
-        tokio::spawn(Self::handle_lobby(receiver, on_client_release));
+        tokio::spawn(Self::handle_lobby(receiver, on_destroyed, on_client_release));
 
         sender
     }
