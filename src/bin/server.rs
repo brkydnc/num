@@ -1,26 +1,23 @@
 #![feature(once_cell)]
 #![feature(entry_insert)]
 
-
+use bmrng::error::RequestError;
 use futures_util::future::{BoxFuture, FutureExt};
-use tokio::{
-    sync::mpsc::Sender,
-    net::{TcpListener, TcpStream}
-};
-use tungstenite::Error as TungsteniteError;
 use num::{
-    id::{Id, IdGenerator},
     client::{Client, ClientListenError},
     event::EventKind,
-    lobby::Lobby,
+    id::{Id, IdGenerator},
+    lobby::{Lobby, Sender},
 };
 use std::{
-    sync::{Arc, RwLock},
-    lazy::SyncLazy,
     collections::HashMap,
+    lazy::SyncLazy,
+    sync::{Arc, RwLock},
 };
+use tokio::net::{TcpListener, TcpStream};
+use tungstenite::Error as TungsteniteError;
 
-type LobbyIndex = Arc<RwLock<HashMap<Id, Sender<Client>>>>;
+type LobbyIndex = Arc<RwLock<HashMap<Id, Sender>>>;
 
 static LOBBIES: SyncLazy<LobbyIndex> = SyncLazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 static ID_GENERATOR: SyncLazy<IdGenerator> = SyncLazy::new(|| IdGenerator::new());
@@ -51,20 +48,41 @@ fn handle_idle_client(mut client: Client) -> BoxFuture<'static, ()> {
                             tokio::spawn(handle_idle_client(client));
                         };
 
-                        let sender = Lobby::spawn_handler(on_destroyed, on_client_release);
+                        let sender = Lobby::spawn_handler(client, on_destroyed, on_client_release);
 
-                        // The error contains the same socket.
-                        if let Err(error) = sender.send(client).await {
-                            client = error.0;
-                        } else {
-                            LOBBIES
-                                .try_write()
-                                .expect("Error acquiring the lobby index lock")
-                                .entry(id)
-                                .insert_entry(sender);
+                        LOBBIES
+                            .try_write()
+                            .expect("Error acquiring the lobby index lock")
+                            .entry(id)
+                            .insert_entry(sender);
 
-                            break;
-                        };
+                        break;
+                    }
+                    EventKind::JoinLobby => {
+                        let parsed_id = event.data.map(|data| data.parse::<Id>().ok()).flatten();
+
+                        if let Some(id) = parsed_id {
+                            let client_sender = {
+                                let lobbies = LOBBIES
+                                    .try_read()
+                                    .expect("Error acquiring the lobby index lock");
+
+                                lobbies.get(&id).cloned()
+                            };
+
+                            if let Some(sender) = client_sender {
+                                client = match sender.send_receive(client).await {
+                                    Ok(response) => match response {
+                                        Ok(_) => break,
+                                        Err(client) => client,
+                                    },
+                                    Err(request_error) => match request_error {
+                                        RequestError::SendError(client) => client,
+                                        _ => unreachable!(),
+                                    },
+                                };
+                            }
+                        }
                     }
                     EventKind::CloseConnection => break,
                     _ => {}

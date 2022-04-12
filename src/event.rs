@@ -8,6 +8,9 @@ pub enum EventKind {
     CloseConnection,
     CreateLobby,
     JoinLobby,
+    LeaveLobby,
+    SetSecretNumber,
+    StartGame,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -1,4 +1,6 @@
-pub mod event;
 pub mod client;
-pub mod lobby;
+pub mod event;
 pub mod id;
+pub mod lobby;
+pub mod seat;
+pub mod secret;
