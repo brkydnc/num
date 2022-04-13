@@ -1,14 +1,14 @@
 use crate::{
     client::{Client, ClientListenError},
     event::Event,
-    secret::SecretNumber,
+    secret::Secret,
 };
 use futures_util::future::OptionFuture;
 use std::future::Future;
 
 pub struct Seat {
     client: Option<Client>,
-    secret: Option<SecretNumber>,
+    secret: Option<Secret>,
 }
 
 impl Seat {
@@ -19,11 +19,11 @@ impl Seat {
         }
     }
 
-    pub fn secret_number(&self) -> Option<&SecretNumber> {
+    pub fn secret(&self) -> Option<&Secret> {
         self.secret.as_ref()
     }
 
-    pub fn set_secret_number(&mut self, number: SecretNumber) {
+    pub fn set_secret(&mut self, number: Secret) {
         self.secret = Some(number);
     }
 
@@ -46,13 +46,17 @@ impl Seat {
         self.client.is_some()
     }
 
-    pub fn listen_if_occupied(
+    pub fn is_empty(&self) -> bool {
+        self.client.is_none()
+    }
+
+    pub fn listen(
         &mut self,
     ) -> OptionFuture<impl Future<Output = Result<Event, ClientListenError>> + '_> {
         self.client.as_mut().map(|client| client.listen()).into()
     }
 
-    pub fn release_if_occupied<R>(&mut self, on_release: &R)
+    pub fn release<R>(&mut self, on_release: &R)
     where
         R: Fn(Client) + Send + 'static,
     {

@@ -2,7 +2,7 @@ use crate::{
     client::{Client, ClientListenError},
     event::EventKind,
     seat::Seat,
-    secret::SecretNumber,
+    secret::Secret,
 };
 use bmrng::{channel, RequestReceiver, RequestSender};
 use tokio::select;
@@ -11,32 +11,34 @@ pub type Sender = RequestSender<Client, Result<(), Client>>;
 pub type Receiver = RequestReceiver<Client, Result<(), Client>>;
 
 pub struct Lobby {
-    clients: (Seat, Seat),
+    host: Seat,
+    guest: Seat,
 }
 
 impl Lobby {
     fn new(creator: Client) -> Self {
         let mut lobby = Self {
-            clients: (Seat::new(), Seat::new()),
+            host: Seat::new(),
+            guest: Seat::new(),
         };
-        lobby.clients.0.occupy(creator);
+        lobby.host.occupy(creator);
 
         lobby
     }
 
     fn is_full(&self) -> bool {
-        self.clients.0.is_occupied() && self.clients.1.is_occupied()
+        self.host.is_occupied() && self.guest.is_occupied()
     }
 
     fn is_empty(&self) -> bool {
-        !self.clients.0.is_occupied() && !self.clients.1.is_occupied()
+        self.host.is_empty() && self.guest.is_empty()
     }
 
-    fn join_client(&mut self, client: Client) {
-        if !self.clients.0.is_occupied() {
-            self.clients.0.occupy(client);
-        } else if !self.clients.1.is_occupied() {
-            self.clients.1.occupy(client);
+    fn join(&mut self, client: Client) {
+        if self.host.is_empty() {
+            self.host.occupy(client);
+        } else if self.guest.is_empty() {
+            self.guest.occupy(client);
         }
     }
 
@@ -55,18 +57,18 @@ impl Lobby {
                     if lobby.is_full() {
                         let _ = responder.respond(Err(client));
                     } else {
-                        lobby.join_client(client);
+                        lobby.join(client);
                         let _ = responder.respond(Ok(()));
                     }
                 },
-                Some(listen_result) = lobby.clients.0.listen_if_occupied() => {
+                Some(listen_result) = lobby.host.listen() => {
                     match listen_result {
                         Ok(event) => {
                             match event.kind {
-                                EventKind::SetSecretNumber => {
+                                EventKind::SetSecret => {
                                     if let Some(string) = event.data {
-                                        match SecretNumber::parse(string) {
-                                            Some(secret_number) => lobby.clients.0.set_secret_number(secret_number),
+                                        match Secret::parse(string) {
+                                            Some(secret_number) => lobby.host.set_secret(secret_number),
                                             None => continue,
                                         }
                                     }
@@ -74,46 +76,46 @@ impl Lobby {
                                 EventKind::StartGame => {
                                     if !lobby.is_full() { continue; }
                                 },
-                                EventKind::LeaveLobby => {
-                                    lobby.clients.0.release_if_occupied(&on_client_release);
-                                    lobby.clients.0 = lobby.clients.1;
-                                    lobby.clients.1 = Seat::new();
+                                EventKind::Leave => {
+                                    lobby.host.release(&on_client_release);
+                                    lobby.host = lobby.guest;
+                                    lobby.guest = Seat::new();
                                 }
                                 EventKind::CloseConnection => {
-                                    lobby.clients.0.empty();
+                                    lobby.host.empty();
                                 },
                                 _ => {}
                             }
                         },
                         Err(ClientListenError::SocketStreamExhausted) => {
-                            lobby.clients.0.empty();
+                            lobby.host.empty();
                         },
                         _ => {},
                     }
                 },
-                Some(listen_result) = lobby.clients.1.listen_if_occupied() => {
+                Some(listen_result) = lobby.guest.listen() => {
                     match listen_result {
                         Ok(event) => {
                             match event.kind {
-                                EventKind::SetSecretNumber => {
+                                EventKind::SetSecret => {
                                     if let Some(string) = event.data {
-                                        match SecretNumber::parse(string) {
-                                            Some(secret_number) => lobby.clients.1.set_secret_number(secret_number),
+                                        match Secret::parse(string) {
+                                            Some(secret_number) => lobby.guest.set_secret(secret_number),
                                             None => continue,
                                         }
                                     }
                                 },
-                                EventKind::LeaveLobby => {
-                                    lobby.clients.1.release_if_occupied(&on_client_release);
+                                EventKind::Leave => {
+                                    lobby.guest.release(&on_client_release);
                                 }
                                 EventKind::CloseConnection => {
-                                    lobby.clients.1.empty();
+                                    lobby.guest.empty();
                                 },
                                 _ => {}
                             }
                         },
                         Err(ClientListenError::SocketStreamExhausted) => {
-                            lobby.clients.1.empty();
+                            lobby.guest.empty();
                         },
                         _ => {},
                     }

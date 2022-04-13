@@ -8,8 +8,8 @@ pub enum EventKind {
     CloseConnection,
     CreateLobby,
     JoinLobby,
-    LeaveLobby,
-    SetSecretNumber,
+    Leave,
+    SetSecret,
     StartGame,
 }
 
