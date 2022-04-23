@@ -2,6 +2,7 @@ use crate::{
     client::{Client, ClientListenError},
     event::Event,
     secret::Secret,
+    game::Player,
 };
 use futures_util::future::OptionFuture;
 use std::future::Future;
@@ -17,6 +18,10 @@ impl Seat {
             secret: None,
             client: None,
         }
+    }
+
+    pub fn to_player(self) -> Player {
+        Player::new(self.client.unwrap(), self.secret.unwrap())
     }
 
     pub fn secret(&self) -> Option<&Secret> {
@@ -48,6 +53,10 @@ impl Seat {
 
     pub fn is_empty(&self) -> bool {
         self.client.is_none()
+    }
+
+    pub fn ready_to_play(&self) -> bool {
+        self.client.is_some() && self.secret.is_some()
     }
 
     pub fn listen(

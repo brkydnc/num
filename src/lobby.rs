@@ -3,6 +3,7 @@ use crate::{
     event::EventKind,
     seat::Seat,
     secret::Secret,
+    game::Game,
 };
 use bmrng::{channel, RequestReceiver, RequestSender};
 use tokio::select;
@@ -42,6 +43,10 @@ impl Lobby {
         }
     }
 
+    fn ready_to_play(&self) -> bool {
+        self.host.ready_to_play() && self.guest.ready_to_play()
+    }
+
     async fn handle_lobby<D, R>(
         mut lobby: Lobby,
         mut receiver: Receiver,
@@ -74,7 +79,15 @@ impl Lobby {
                                     }
                                 },
                                 EventKind::StartGame => {
-                                    if !lobby.is_full() { continue; }
+                                    if !lobby.ready_to_play() { continue; }
+
+                                    let host = lobby.host.to_player();
+                                    let guest = lobby.guest.to_player();
+
+                                    Game::new(host, guest)
+                                        .spawn_handler(on_client_release);
+
+                                    break;
                                 },
                                 EventKind::Leave => {
                                     lobby.host.release(&on_client_release);

@@ -11,6 +11,7 @@ pub enum EventKind {
     Leave,
     SetSecret,
     StartGame,
+    Guess,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

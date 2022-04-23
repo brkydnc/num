@@ -4,6 +4,10 @@ use std::num::NonZeroU16;
 pub struct Secret(NonZeroU16);
 
 impl Secret {
+    pub fn get(&self) -> u16 {
+        self.0.get()
+    }
+
     pub fn parse<T: AsRef<str>>(string: T) -> Option<Self> {
         let number: u16 = string.as_ref().parse().ok()?;
 
@@ -22,6 +26,27 @@ impl Secret {
 
         // SAFETY: The number is guaranteed to be greater than zero above.
         unsafe { Some(Secret(NonZeroU16::new_unchecked(number))) }
+    }
+
+    pub fn score(&self, guess: &Secret) -> (u8, u8) {
+        let secret = self.get();
+        let guess = guess.get();
+
+        let secret = [(secret / 100) % 10, (secret / 10) % 10, secret % 10];
+        let guess = [(guess / 100) % 10, (guess / 10) % 10, guess % 10];
+
+        let mut correct_position = 0;
+        let mut wrong_position = 0;
+        
+        for i in 0..3 {
+            if secret[i] == guess[i] {
+                correct_position += 1;
+            } else if secret[i % 3] == guess[(i + 1) % 3] || secret[i % 3] == guess[(i + 2) % 3] {
+                wrong_position += 1;
+            }
+        }
+
+        (correct_position, wrong_position)
     }
 }
 
@@ -71,14 +96,47 @@ mod test {
 
     #[test]
     fn parses_unique_three_digit_numbers() {
-        assert_eq!(Secret::parse("123").unwrap().0.get(), 123);
-        assert_eq!(Secret::parse("152").unwrap().0.get(), 152);
-        assert_eq!(Secret::parse("921").unwrap().0.get(), 921);
-        assert_eq!(Secret::parse("756").unwrap().0.get(), 756);
-        assert_eq!(Secret::parse("987").unwrap().0.get(), 987);
-        assert_eq!(Secret::parse("012").unwrap().0.get(), 12);
-        assert_eq!(Secret::parse("019").unwrap().0.get(), 19);
-        assert_eq!(Secret::parse("536").unwrap().0.get(), 536);
-        assert_eq!(Secret::parse("671").unwrap().0.get(), 671);
+        macro_rules! parse_assert_eq {
+            ($($secret:literal => $number:literal),*) => {
+                $(assert_eq!(Secret::parse($secret).unwrap().0.get(), $number);)*
+            }
+        }
+
+        parse_assert_eq! {
+            "123" => 123,
+            "152" => 152,
+            "921" => 921,
+            "756" => 756,
+            "987" => 987,
+            "012" => 12,
+            "019" => 19,
+            "536" => 536,
+            "671" => 671
+        }
+    }
+
+    #[test]
+    fn scores_guesses() {
+        macro_rules! score_assert_eq {
+            ($($secret:literal $guess:literal => $correct:literal $wrong:literal),*) => {
+                $(
+                    assert_eq!(
+                        Secret::parse($secret).unwrap()
+                            .score(&Secret::parse($guess).unwrap()),
+                        ($correct, $wrong)
+                    )
+                ;)*
+            }
+        }
+
+        score_assert_eq! {
+            "123" "456" => 0 0,
+            "123" "123" => 3 0,
+            "123" "312" => 0 3,
+            "123" "321" => 1 2,
+            "123" "230" => 0 2,
+            "123" "923" => 2 0,
+            "123" "142" => 1 1
+        }
     }
 }
