@@ -15,18 +15,23 @@ use std::{
     sync::{Arc, RwLock},
 };
 use tokio::net::{TcpListener, TcpStream};
-use tungstenite::Error as TungsteniteError;
+use log::{info, error};
 
 type LobbyIndex = Arc<RwLock<HashMap<Id, Sender>>>;
 
 static LOBBIES: SyncLazy<LobbyIndex> = SyncLazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 static ID_GENERATOR: SyncLazy<IdGenerator> = SyncLazy::new(|| IdGenerator::new());
 
-async fn handle_new_connection(tcp_stream: TcpStream) -> Result<(), TungsteniteError> {
-    let socket = tokio_tungstenite::accept_async(tcp_stream).await?;
-    let client = Client::new(socket);
-    tokio::spawn(handle_idle_client(client));
-    Ok(())
+async fn handle_new_connection(tcp_stream: TcpStream) {
+    match tokio_tungstenite::accept_async(tcp_stream).await {
+        Ok(socket) => {
+            let client = Client::new(socket);
+            tokio::spawn(handle_idle_client(client));
+        },
+        Err(cause) => {
+            error!("Couldn't upgrade connection to websocket: {:?}", cause);
+        }
+    };
 }
 
 fn handle_idle_client(mut client: Client) -> BoxFuture<'static, ()> {
@@ -95,13 +100,17 @@ fn handle_idle_client(mut client: Client) -> BoxFuture<'static, ()> {
     .boxed()
 }
 
+const ADDRESS: &'static str = "127.0.0.1:7878";
+
 #[tokio::main]
 async fn main() {
-    let listener = TcpListener::bind("127.0.0.1:7878")
+    env_logger::init();
+
+    let listener = TcpListener::bind(ADDRESS)
         .await
         .expect("Error binding to address");
 
-    eprintln!("Listening...");
+    info!("Listening address {}", ADDRESS);
     while let Ok((stream, _)) = listener.accept().await {
         tokio::spawn(handle_new_connection(stream));
     }

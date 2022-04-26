@@ -7,6 +7,7 @@ use crate::{
     client::{Client, ClientListenError},
     secret::Secret,
 };
+use log::info;
 
 pub struct Player {
     pub(self) client: Client,
@@ -38,6 +39,8 @@ impl Game {
     where
         R: Fn(Client) + Send + 'static,
     {
+        info!("A game handler has just been spawned");
+
         tokio::spawn(async move {
             let mut turn_swap_interval = interval(Duration::from_secs(20));
 
@@ -133,5 +136,7 @@ impl Game {
                 }
             }
         });
+
+        info!("A game handler has just been destroyed");
     }
 }

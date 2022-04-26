@@ -7,6 +7,7 @@ use crate::{
 };
 use bmrng::{channel, RequestReceiver, RequestSender};
 use tokio::select;
+use log::info;
 
 pub type Sender = RequestSender<Client, Result<(), Client>>;
 pub type Receiver = RequestReceiver<Client, Result<(), Client>>;
@@ -56,6 +57,8 @@ impl Lobby {
         D: FnOnce() + Send + 'static,
         R: Fn(Client) + Send + 'static,
     {
+        info!("A lobby handler has just been spawned");
+
         loop {
             select! {
                 Ok((client, responder)) = receiver.recv(), if !lobby.is_empty() => {
@@ -138,6 +141,7 @@ impl Lobby {
         }
 
         on_destroyed();
+        info!("A lobby handler has just been destroyed");
     }
 
     pub fn spawn_handler<D, R>(creator: Client, on_destroyed: D, on_client_release: R) -> Sender
