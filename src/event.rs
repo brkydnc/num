@@ -1,10 +1,18 @@
 use serde::{Deserialize, Serialize};
 use serde_repr::*;
 
+// TODO: Most of the events do not contain any data. And their serialized forms
+// are constants. Find a way to eliminate the extra effort to serialzie
+// the events.
+
+// TODO: Client-sent events are mostly directives, and server-sent events are
+// notify-oriented. Maybe separating the events as `Directive`s and `Notification`s
+// help simplify the code.
 #[derive(Clone, Copy, Debug, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
 #[non_exhaustive]
 pub enum EventKind {
+    // Directives?
     CloseConnection,
     CreateLobby,
     JoinLobby,
@@ -12,6 +20,10 @@ pub enum EventKind {
     SetSecret,
     StartGame,
     Guess,
+
+    // Notifications?
+    GuestJoin,
+    OpponentLeave,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
