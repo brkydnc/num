@@ -4,6 +4,7 @@ use crate::{
     secret::Secret,
     game::Player,
 };
+use tungstenite::Error as TungsteniteError;
 use futures_util::future::OptionFuture;
 use std::future::Future;
 
@@ -63,6 +64,13 @@ impl Seat {
         &mut self,
     ) -> OptionFuture<impl Future<Output = Result<Event, ClientListenError>> + '_> {
         self.client.as_mut().map(|client| client.listen()).into()
+    }
+
+    pub fn emit<'a>(
+        &'a mut self,
+        event: &'a Event,
+    ) -> OptionFuture<impl Future<Output = Result<(), TungsteniteError>> + 'a> {
+        self.client.as_mut().map(|client| client.emit(event)).into()
     }
 
     pub fn release<R>(&mut self, on_release: &R)
