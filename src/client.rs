@@ -28,13 +28,14 @@ impl Client {
             .next()
             .await
             .ok_or(ClientListenError::SocketStreamExhausted)?;
+
         let message = message_read.or(Err(ClientListenError::MessageRead))?;
 
         match message {
             Message::Text(ref text) => {
                 serde_json::from_str::<Event>(text).or(Err(ClientListenError::EventParse))
             }
-            Message::Close(_) => Ok(Event::new(EventKind::CloseConnection, None)),
+            Message::Close(_) => Ok(Event::from(EventKind::CloseConnection)),
             _ => Err(ClientListenError::UnknownEvent),
         }
     }

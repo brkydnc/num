@@ -22,14 +22,23 @@ pub struct Event {
 }
 
 impl Event {
-    pub fn new(kind: EventKind, data: Option<String>) -> Self {
-        Self { kind, data }
+    pub fn with(mut self, data: String) -> Self {
+        self.data = Some(data);
+
+        self
     }
+
     pub fn kind(&self) -> EventKind {
         self.kind
     }
 
     pub fn data(&self) -> Option<&String> {
         self.data.as_ref()
+    }
+}
+
+impl From<EventKind> for Event {
+    fn from(kind: EventKind) -> Self {
+        Self { kind, data: None }
     }
 }
