@@ -8,6 +8,7 @@ use crate::{
     secret::Secret,
 };
 use log::info;
+use tokio::join;
 
 pub struct Player {
     pub(self) client: Client,
@@ -17,10 +18,6 @@ pub struct Player {
 impl Player {
     pub fn new(client: Client, secret: Secret) -> Self {
         Self { client, secret }
-    }
-
-    pub async fn listen(&mut self) -> Result<Event, ClientListenError> {
-        self.client.listen().await
     }
 }
 
@@ -49,13 +46,14 @@ impl Game {
                     _ = turn_swap_interval.tick() => {
                         self.host_turn = !self.host_turn;
                     },
-                    listen_result = self.host.listen() => {
+                    listen_result = self.host.client.listen() => {
                         match listen_result {
                             Ok(event) => {
                                 match event.kind {
                                     EventKind::Guess => {
                                         if !self.host_turn { continue };
 
+                                        // TODO: Notify guesses
                                         if let Some(string) = event.data {
                                             if let Some(guess) = Secret::parse(string) {
                                                 let (correct, _wrong) = self.host.secret.score(&guess);
@@ -73,11 +71,22 @@ impl Game {
                                         }
                                     },
                                     EventKind::Leave => {
+                                        let leave = Event::from(EventKind::Leave);
+                                        let notify_leave = self.host.client.emit(&leave);
+
+                                        let opponent_leave = Event::from(EventKind::OpponentLeave);
+                                        let notify_opponent_leave = self.guest.client.emit(&opponent_leave);
+
+                                        let _ = join!(notify_leave, notify_opponent_leave);
+
                                         on_client_release(self.host.client);
                                         on_client_release(self.guest.client);
                                         break;
                                     }
                                     EventKind::CloseConnection => {
+                                        let opponent_leave = Event::from(EventKind::OpponentLeave);
+                                        let _ = self.guest.client.emit(&opponent_leave).await;
+
                                         on_client_release(self.guest.client);
                                         break;
                                     },
@@ -85,19 +94,23 @@ impl Game {
                                 }
                             },
                             Err(ClientListenError::SocketStreamExhausted) => {
+                                let opponent_leave = Event::from(EventKind::OpponentLeave);
+                                let _ = self.guest.client.emit(&opponent_leave).await;
+
                                 on_client_release(self.guest.client);
                                 break;
                             },
                             _ => {},
                         }
                     },
-                    listen_result = self.guest.listen() => {
+                    listen_result = self.guest.client.listen() => {
                         match listen_result {
                             Ok(event) => {
                                 match event.kind {
                                     EventKind::Guess => {
                                         if self.host_turn { continue };
 
+                                        // TODO: Notify guesses
                                         if let Some(string) = event.data {
                                             if let Some(guess) = Secret::parse(string) {
                                                 let (correct, _wrong) = self.host.secret.score(&guess);
@@ -115,11 +128,22 @@ impl Game {
                                         }
                                     },
                                     EventKind::Leave => {
+                                        let leave = Event::from(EventKind::Leave);
+                                        let notify_leave = self.guest.client.emit(&leave);
+
+                                        let opponent_leave = Event::from(EventKind::OpponentLeave);
+                                        let notify_opponent_leave = self.host.client.emit(&opponent_leave);
+
+                                        let _ = join!(notify_leave, notify_opponent_leave);
+
                                         on_client_release(self.host.client);
                                         on_client_release(self.guest.client);
                                         break;
                                     }
                                     EventKind::CloseConnection => {
+                                        let opponent_leave = Event::from(EventKind::OpponentLeave);
+                                        let _ = self.host.client.emit(&opponent_leave).await;
+
                                         on_client_release(self.host.client);
                                         break;
                                     },
@@ -127,6 +151,9 @@ impl Game {
                                 }
                             },
                             Err(ClientListenError::SocketStreamExhausted) => {
+                                let opponent_leave = Event::from(EventKind::OpponentLeave);
+                                let _ = self.host.client.emit(&opponent_leave).await;
+
                                 on_client_release(self.host.client);
                                 break;
                             },
