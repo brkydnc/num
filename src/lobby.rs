@@ -4,15 +4,21 @@ use crate::{
     secret::Secret,
     game::{Game, Player},
 };
-use bmrng::{channel, RequestReceiver, RequestSender};
-use tokio::{select, join};
+
+use tokio::{
+    sync::mpsc::{
+        Sender,
+        Receiver,
+        channel
+    },
+    select,
+    join,
+};
+
 use log::info;
 use tungstenite::Error as TungsteniteError;
 use futures_util::future::OptionFuture;
 use std::future::Future;
-
-pub type Sender = RequestSender<Client, Result<(), Client>>;
-pub type Receiver = RequestReceiver<Client, Result<(), Client>>;
 
 struct Host {
     client: Client,
@@ -102,7 +108,7 @@ impl Lobby {
 
     async fn listen<D, R>(
         mut self,
-        mut receiver: Receiver,
+        mut receiver: Receiver<Client>,
         on_destroyed: D,
         on_client_release: R,
     ) where
@@ -114,9 +120,11 @@ impl Lobby {
 
         loop {
             select! {
-                Ok((mut client, responder)) = receiver.recv(), if !self.guest.is_connected() => {
+                Some(mut client) = receiver.recv() => {
+                    // If there already is a guest, spawn an idle handler for
+                    // the incoming client.
                     if self.guest.is_connected() {
-                        let _ = responder.respond(Err(client));
+                        on_client_release(client);
                     } else {
                         let guest_join_event = Event::from(EventKind::GuestJoin);
                         let notify_host = self.host.emit(&guest_join_event);
@@ -127,7 +135,6 @@ impl Lobby {
                         let _ = join!(notify_host, notify_guest);
 
                         self.guest.set_client(client);
-                        let _ = responder.respond(Ok(()));
 
                         join!();
                     }
@@ -247,12 +254,12 @@ impl Lobby {
         info!("A lobby handler has just been destroyed");
     }
 
-    pub fn spawn<D, R>(self, on_destroyed: D, on_client_release: R) -> Sender
+    pub fn spawn<D, R>(self, on_destroyed: D, on_client_release: R) -> Sender<Client>
     where
         D: FnOnce() + Send + 'static,
         R: Fn(Client) + Send + 'static,
     {
-        let (sender, receiver) = channel(2);
+        let (sender, receiver) = channel(1);
 
         tokio::spawn(self.listen(receiver, on_destroyed, on_client_release));
 

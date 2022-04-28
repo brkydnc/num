@@ -1,22 +1,24 @@
 #![feature(once_cell)]
 #![feature(entry_insert)]
 
-use bmrng::error::RequestError;
 use num::{
     client::{Client, ClientListenError, ClientListenerState},
     event::EventKind,
+    lobby::Lobby,
     id::{Id, IdGenerator},
-    lobby::{Lobby, Sender},
 };
 use std::{
     collections::HashMap,
     lazy::SyncLazy,
     sync::{Arc, RwLock},
 };
-use tokio::net::{TcpListener, TcpStream};
-use log::{info, error};
+use tokio::{
+    sync::mpsc::Sender,
+    net::{TcpListener, TcpStream}
+};
+use log::{info, error, warn};
 
-type LobbyIndex = Arc<RwLock<HashMap<Id, Sender>>>;
+type LobbyIndex = Arc<RwLock<HashMap<Id, Sender<Client>>>>;
 
 static LOBBIES: SyncLazy<LobbyIndex> = SyncLazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 static ID_GENERATOR: SyncLazy<IdGenerator> = SyncLazy::new(|| IdGenerator::new());
@@ -36,11 +38,12 @@ impl Idler {
             if let ClientListenerState::Listen(mut client) = self.state.replace() {
                 match client.listen().await {
                     Ok(event) => match event.kind {
+                        // Because the client is moved, self.state remains `Stop`
+                        // for the two arms below
                         EventKind::CreateLobby => Self::on_create_lobby(client).await,
-
                         EventKind::JoinLobby => Self::on_join_lobby(client, event.data).await,
 
-                        // self.state remains `Stop`, client gets dropped.
+                        // self.state remains `Stop` so the client gets dropped.
                         EventKind::CloseConnection => {},
 
                         // Continue listening only if the event is ignored.
@@ -63,6 +66,7 @@ impl Idler {
     async fn on_create_lobby(client: Client) {
         let id = ID_GENERATOR.next();
 
+        // LobbyIndex cleanup for the future destruction of the lobby.
         let on_destroyed = move || {
             LOBBIES
                 .try_write()
@@ -70,8 +74,7 @@ impl Idler {
                 .remove(&id);
         };
 
-        let sender = Lobby::new(client)
-            .spawn(on_destroyed, handle_idle_client);
+        let sender = Lobby::new(client).spawn(on_destroyed, handle_idle_client);
 
         LOBBIES
             .try_write()
@@ -80,12 +83,14 @@ impl Idler {
             .insert_entry(sender);
     }
 
-    async fn on_join_lobby(mut client: Client, id_string: Option<String>) {
+    async fn on_join_lobby(client: Client, id_string: Option<String>) {
+        // Parse the string into the corresponding id.
         let id_parse = id_string
             .map(|id| id.parse::<Id>().ok())
             .flatten();
 
         if let Some(id) = id_parse {
+            // Try to acquire the Sender of the lobby of the corresponding id.
             let client_sender = {
                 let lobbies = LOBBIES
                     .try_read()
@@ -95,16 +100,15 @@ impl Idler {
             };
 
             if let Some(sender) = client_sender {
-                client = match sender.send_receive(client).await {
-                    Ok(response) => match response {
-                        Ok(_) => panic!(),
-                        Err(client) => client,
-                    },
-                    Err(request_error) => match request_error {
-                        RequestError::SendError(client) => client,
-                        _ => unreachable!(),
-                    },
-                };
+                if let Err(error) = sender.send(client).await {
+                    // If the send was unsuccessful, spawn an idle handler for
+                    // the client.
+                    handle_idle_client(error.0);
+
+                    // This may be an unwanted behavior, so logging a warning
+                    // might be a good indicator (for the future).
+                    warn!("Couln't send the client through the lobby sender.");
+                }
             }
         }
     }
