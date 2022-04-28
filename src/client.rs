@@ -47,3 +47,22 @@ impl Client {
         self.socket.send(Message::Text(json)).await
     }
 }
+
+pub enum ClientListenerState {
+    Listen(Client),
+    Stop,
+}
+
+impl ClientListenerState {
+    pub fn stop(&mut self) {
+        *self = Self::Stop;
+    }
+
+    pub fn listen(&mut self, client: Client) {
+        *self = Self::Listen(client);
+    }
+
+    pub fn replace(&mut self) -> ClientListenerState {
+        std::mem::replace(self, Self::Stop)
+    }
+}
