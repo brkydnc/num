@@ -53,7 +53,8 @@ fn handle_idle_client(mut client: Client) -> BoxFuture<'static, ()> {
                             tokio::spawn(handle_idle_client(client));
                         };
 
-                        let sender = Lobby::spawn_handler(client, on_destroyed, on_client_release);
+                        let sender = Lobby::new(client)
+                            .spawn(on_destroyed, on_client_release);
 
                         LOBBIES
                             .try_write()

@@ -1,57 +1,107 @@
 use crate::{
     client::{Client, ClientListenError},
     event::{Event, EventKind},
-    seat::Seat,
     secret::Secret,
-    game::Game,
+    game::{Game, Player},
 };
 use bmrng::{channel, RequestReceiver, RequestSender};
 use tokio::{select, join};
 use log::info;
+use tungstenite::Error as TungsteniteError;
+use futures_util::future::OptionFuture;
+use std::future::Future;
 
 pub type Sender = RequestSender<Client, Result<(), Client>>;
 pub type Receiver = RequestReceiver<Client, Result<(), Client>>;
 
+struct Host {
+    client: Client,
+    secret: Option<Secret>,
+}
+
+impl Host {
+    fn new(client: Client) -> Self {
+        Self { client, secret: None }
+    }
+
+    fn is_ready(&self) -> bool {
+        self.secret.is_some()
+    }
+
+    async fn listen(&mut self) -> Result<Event, ClientListenError> {
+        self.client.listen().await
+    }
+
+    async fn emit(&mut self, event: &Event) -> Result<(), TungsteniteError> {
+        self.client.emit(event).await
+    }
+}
+
+struct Guest {
+    pub client: Option<Client>,
+    secret: Option<Secret>,
+}
+
+impl Guest {
+    fn new() -> Self {
+        Self { client: None, secret: None }
+    }
+
+    fn into_player(self) -> Player {
+        let client = self.client.unwrap();
+        let secret = self.secret.unwrap();
+
+        Player::new(client, secret)
+    }
+
+    fn set_client(&mut self, client: Client) {
+        self.client = Some(client);
+        self.secret = None;
+    }
+
+    fn set_secret(&mut self, secret: Secret) {
+        self.secret = Some(secret);
+    }
+
+    fn is_connected(&self) -> bool {
+        self.client.is_some()
+    }
+
+    fn is_ready(&self) -> bool {
+        self.client.is_some() && self.secret.is_some()
+    }
+
+    pub fn listen(
+        &mut self,
+    ) -> OptionFuture<impl Future<Output = Result<Event, ClientListenError>> + '_> {
+        self.client.as_mut().map(|client| client.listen()).into()
+    }
+
+    pub fn emit<'a>(
+        &'a mut self,
+        event: &'a Event,
+    ) -> OptionFuture<impl Future<Output = Result<(), TungsteniteError>> + 'a> {
+        self.client.as_mut().map(|client| client.emit(event)).into()
+    }
+}
+
 //TODO: There is always a host, there is no need to wrap the host `Client` with
 // an `Option`.
 pub struct Lobby {
-    host: Seat,
-    guest: Seat,
+    host: Host,
+    guest: Guest,
 }
 
 impl Lobby {
-    fn new(creator: Client) -> Self {
-        let mut lobby = Self {
-            host: Seat::new(),
-            guest: Seat::new(),
-        };
-        lobby.host.occupy(creator);
-
-        lobby
-    }
-
-    fn is_full(&self) -> bool {
-        self.host.is_occupied() && self.guest.is_occupied()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.host.is_empty() && self.guest.is_empty()
-    }
-
-    fn join(&mut self, client: Client) {
-        if self.host.is_empty() {
-            self.host.occupy(client);
-        } else if self.guest.is_empty() {
-            self.guest.occupy(client);
+    pub fn new(creator: Client) -> Self {
+        Self {
+            host: Host::new(creator),
+            guest: Guest::new()
         }
     }
 
-    fn ready_to_play(&self) -> bool {
-        self.host.ready_to_play() && self.guest.ready_to_play()
-    }
-
-    async fn handle_lobby<D, R>(
-        mut lobby: Lobby,
+    async fn listen<D, R>(
+        mut self,
         mut receiver: Receiver,
         on_destroyed: D,
         on_client_release: R,
@@ -60,29 +110,29 @@ impl Lobby {
         R: Fn(Client) + Send + 'static,
     {
         info!("A lobby handler has just been spawned");
-        lobby.host.emit(&Event::from(EventKind::CreateLobby)).await;
+        let _ = self.host.emit(&Event::from(EventKind::CreateLobby)).await;
 
         loop {
             select! {
-                Ok((mut client, responder)) = receiver.recv(), if !lobby.is_empty() => {
-                    if lobby.is_full() {
+                Ok((mut client, responder)) = receiver.recv(), if !self.guest.is_connected() => {
+                    if self.guest.is_connected() {
                         let _ = responder.respond(Err(client));
                     } else {
                         let guest_join_event = Event::from(EventKind::GuestJoin);
-                        let notify_host = lobby.host.emit(&guest_join_event);
+                        let notify_host = self.host.emit(&guest_join_event);
 
                         let join_lobby_event = Event::from(EventKind::JoinLobby);
                         let notify_guest = client.emit(&join_lobby_event);
 
                         let _ = join!(notify_host, notify_guest);
 
-                        lobby.join(client);
+                        self.guest.set_client(client);
                         let _ = responder.respond(Ok(()));
 
                         join!();
                     }
                 },
-                Some(listen_result) = lobby.host.listen() => {
+                listen_result = self.host.listen() => {
                     match listen_result {
                         Ok(event) => {
                             match event.kind {
@@ -90,18 +140,20 @@ impl Lobby {
                                     if let Some(string) = event.data {
                                         match Secret::parse(string) {
                                             Some(secret_number) => {
-                                                lobby.host.set_secret(secret_number);
-                                                lobby.host.emit(&Event::from(EventKind::SetSecret)).await;
+                                                self.host.secret = Some(secret_number);
+                                                let _ = self.host.emit(&Event::from(EventKind::SetSecret)).await;
                                             },
                                             None => continue,
                                         }
                                     }
                                 },
                                 EventKind::StartGame => {
-                                    if !lobby.ready_to_play() { continue; }
+                                    if !(self.host.is_ready() && self.guest.is_ready()) {
+                                        continue;
+                                    }
 
-                                    let host = lobby.host.to_player();
-                                    let guest = lobby.guest.to_player();
+                                    let host = Player::new(self.host.client, self.host.secret.unwrap());
+                                    let guest = self.guest.into_player();
 
                                     Game::new(host, guest)
                                         .spawn_handler(on_client_release);
@@ -109,27 +161,48 @@ impl Lobby {
                                     break;
                                 },
                                 EventKind::Leave => {
-                                    lobby.host.release(&on_client_release);
-                                    lobby.host = lobby.guest;
-                                    lobby.guest = Seat::new();
+                                    if let Some(client) = self.guest.client {
+                                        let host_client = self.host.client;
 
-                                    lobby.guest.emit(&Event::from(EventKind::OpponentLeave)).await;
+                                        self.host.client = client;
+                                        self.host.secret = self.guest.secret;
+                                        self.guest = Guest::new();
+
+                                        on_client_release(host_client);
+                                        self.guest.emit(&Event::from(EventKind::OpponentLeave)).await;
+                                    } else {
+                                        on_client_release(self.host.client);
+                                        break;
+                                    }
                                 }
                                 EventKind::CloseConnection => {
-                                    lobby.host.empty();
-                                    lobby.guest.emit(&Event::from(EventKind::OpponentLeave)).await;
+                                    if let Some(client) = self.guest.client {
+                                        self.host.client = client;
+                                        self.host.secret = self.guest.secret;
+                                        self.guest = Guest::new();
+
+                                        self.guest.emit(&Event::from(EventKind::OpponentLeave)).await;
+                                    } else {
+                                        break;
+                                    }
                                 },
                                 _ => {}
                             }
                         },
                         Err(ClientListenError::SocketStreamExhausted) => {
-                            lobby.host.empty();
-                            lobby.guest.emit(&Event::from(EventKind::OpponentLeave)).await;
+                            if let Some(client) = self.guest.client {
+                                self.host.client = client;
+                                self.host.secret = self.guest.secret;
+                                self.guest = Guest::new();
+                                self.guest.emit(&Event::from(EventKind::OpponentLeave)).await;
+                            } else {
+                                break;
+                            }
                         },
                         _ => {},
                     }
                 },
-                Some(listen_result) = lobby.guest.listen() => {
+                Some(listen_result) = self.guest.listen() => {
                     match listen_result {
                         Ok(event) => {
                             match event.kind {
@@ -137,27 +210,31 @@ impl Lobby {
                                     if let Some(string) = event.data {
                                         match Secret::parse(string) {
                                             Some(secret_number) => {
-                                                lobby.guest.set_secret(secret_number);
-                                                lobby.guest.emit(&Event::from(EventKind::SetSecret)).await;
+                                                self.guest.set_secret(secret_number);
+                                                self.guest.emit(&Event::from(EventKind::SetSecret)).await;
                                             }
                                             None => continue,
                                         }
                                     }
                                 },
                                 EventKind::Leave => {
-                                    lobby.guest.release(&on_client_release);
-                                    lobby.host.emit(&Event::from(EventKind::OpponentLeave)).await;
+                                    on_client_release(self.guest.client.unwrap());
+                                    self.guest.client = None;
+                                    self.guest.secret = None;
+                                    let _ = self.host.emit(&Event::from(EventKind::OpponentLeave)).await;
                                 }
                                 EventKind::CloseConnection => {
-                                    lobby.guest.empty();
-                                    lobby.host.emit(&Event::from(EventKind::OpponentLeave)).await;
+                                    self.guest.client = None;
+                                    self.guest.secret = None;
+                                    let _ = self.host.emit(&Event::from(EventKind::OpponentLeave)).await;
                                 },
                                 _ => {}
                             }
                         },
                         Err(ClientListenError::SocketStreamExhausted) => {
-                            lobby.guest.empty();
-                            lobby.host.emit(&Event::from(EventKind::OpponentLeave)).await;
+                            self.guest.client = None;
+                            self.guest.secret = None;
+                            let _ = self.host.emit(&Event::from(EventKind::OpponentLeave)).await;
                         },
                         _ => {},
                     }
@@ -170,19 +247,14 @@ impl Lobby {
         info!("A lobby handler has just been destroyed");
     }
 
-    pub fn spawn_handler<D, R>(creator: Client, on_destroyed: D, on_client_release: R) -> Sender
+    pub fn spawn<D, R>(self, on_destroyed: D, on_client_release: R) -> Sender
     where
         D: FnOnce() + Send + 'static,
         R: Fn(Client) + Send + 'static,
     {
         let (sender, receiver) = channel(2);
 
-        tokio::spawn(Self::handle_lobby(
-            Self::new(creator),
-            receiver,
-            on_destroyed,
-            on_client_release,
-        ));
+        tokio::spawn(self.listen(receiver, on_destroyed, on_client_release));
 
         sender
     }
