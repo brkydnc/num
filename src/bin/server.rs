@@ -33,32 +33,28 @@ impl Idler {
     }
 
     async fn spawn(mut self) {
-        loop {
-            // Replace self.state with `Stop` temporarily.
-            if let ClientListenerState::Listen(mut client) = self.state.replace() {
-                match client.listen().await {
-                    Ok(event) => match event.kind {
-                        // Because the client is moved, self.state remains `Stop`
-                        // for the two arms below
-                        EventKind::CreateLobby => Self::on_create_lobby(client).await,
-                        EventKind::JoinLobby => Self::on_join_lobby(client, event.data).await,
+        // Replace self.state with `Stop` temporarily.
+        while let ClientListenerState::Listen(mut client) = self.state.replace() {
+            match client.listen().await {
+                Ok(event) => match event.kind {
+                    // Because the client is moved, self.state remains `Stop`
+                    // for the two arms below
+                    EventKind::CreateLobby => Self::on_create_lobby(client).await,
+                    EventKind::JoinLobby => Self::on_join_lobby(client, event.data).await,
 
-                        // self.state remains `Stop` so the client gets dropped.
-                        EventKind::CloseConnection => {},
+                    // self.state remains `Stop` so the client gets dropped.
+                    EventKind::CloseConnection => {},
 
-                        // Continue listening only if the event is ignored.
-                        _ => { self.state.listen(client) }
-                    },
-
-                    // Cannot read the socket, self.state remains `Stop`,
-                    // so the client gets dropped.
-                    Err(ClientListenError::SocketStreamExhausted) => {},
-
-                    // Continue listening
+                    // Continue listening only if the event is ignored.
                     _ => { self.state.listen(client) }
-                }
-            } else {
-                break;
+                },
+
+                // Cannot read the socket, self.state remains `Stop`,
+                // so the client gets dropped.
+                Err(ClientListenError::SocketStreamExhausted) => {},
+
+                // Continue listening
+                _ => { self.state.listen(client) }
             }
         }
     }
