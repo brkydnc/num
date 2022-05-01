@@ -198,7 +198,7 @@ impl Host {
 
     async fn on_start_game(client: Client, host: &mut Member<Self>, guest: &mut Member<Guest>) {
         if !(host.secret.is_some() && guest.secret.is_some()) {
-            return;
+            return host.listener.attach(client);
         }
 
         if let Some(guest_client) = guest.listener.take() {
@@ -240,7 +240,7 @@ impl Host {
                 EventKind::StartGame => Self::on_start_game(client, host, guest).await,
                 EventKind::Leave => {
                     Self::on_leave(host, guest).await;
-                    todo!("Release client without callback release mechanism");
+                    Idler::spawn(client);
                 }
                 EventKind::CloseConnection => Self::on_leave(host, guest).await,
                 _ => host.listener.attach(client),
@@ -304,7 +304,7 @@ impl Guest {
                 EventKind::SetSecret => Self::on_set_secret(guest_client, guest, &event.data).await,
                 EventKind::Leave => {
                     Self::on_leave(host_client, guest).await;
-                    todo!("Release client without callback release mechanism");
+                    Idler::spawn(guest_client);
                 }
                 EventKind::CloseConnection => Self::on_leave(host_client, guest).await,
                 _ => guest.listener.attach(guest_client),
