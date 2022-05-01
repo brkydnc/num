@@ -1,36 +1,29 @@
 use crate::{
-    client::{
-        Client,
-        ClientListener,
-        ClientListenerState,
-        ClientListenResult,
-        ClientListenError,
-    },
+    client::{Client, ClientListenError, ClientListenResult, ClientListener, ClientListenerState},
     event::{Event, EventKind},
-    secret::Secret,
     game::{Game, Player},
     idler::Idler,
-};
-use std::{
-    collections::HashMap,
-    lazy::SyncLazy,
-    sync::{Arc, RwLock, atomic::{AtomicUsize, Ordering}},
-    
-};
-use tokio::{
-    sync::mpsc::{Sender, Receiver, channel},
-    select,
-    join,
+    secret::Secret,
 };
 use futures_util::future::OptionFuture;
 use log::{info, warn};
+use std::{
+    collections::HashMap,
+    lazy::SyncLazy,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, RwLock,
+    },
+};
+use tokio::{
+    join, select,
+    sync::mpsc::{channel, Receiver, Sender},
+};
 
 pub type Id = usize;
 type LobbyIndex = Arc<RwLock<HashMap<Id, Sender<Client>>>>;
 
-static LOBBIES: SyncLazy<LobbyIndex> = SyncLazy::new(|| {
-    Arc::new(RwLock::new(HashMap::new()))
-});
+static LOBBIES: SyncLazy<LobbyIndex> = SyncLazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 pub struct Lobby {
     id: Id,
@@ -45,7 +38,7 @@ impl Lobby {
         Self {
             id: ID.fetch_add(1, Ordering::Relaxed),
             host: Member::new(Host::new(creator)),
-            guest: Member::new(Guest::new())
+            guest: Member::new(Guest::new()),
         }
     }
 
@@ -100,17 +93,19 @@ impl Lobby {
             // same select body. The `OptionFuture` utility allows listening a
             // possibly connected guest along with the host. If there is a guest,
             // and the guest sends an event, the future below will return Some(result).
-            // 
+            //
             // The future accesses guest_client with a mutable reference, If the
             // guest_client was moved, and the `host_client` handlers get executed,
             // the handlers would try to access the guest_client via guest listener
-            // (self.guest.listener), and there would be no client in it, since 
+            // (self.guest.listener), and there would be no client in it, since
             // it was moved.
-            let guest_listen_future: OptionFuture<_> = self.guest.listener
+            let guest_listen_future: OptionFuture<_> = self
+                .guest
+                .listener
                 .client_mut()
                 .map(|client| client.listen())
                 .into();
-            
+
             // Here, the host_client has already been moved from its listener,
             // and the guest_client will be moved if it is relevant.
             //
@@ -142,7 +137,6 @@ impl Lobby {
                     }
                 },
             }
-
         }
 
         {
@@ -163,7 +157,10 @@ struct Member<L: ClientListener> {
 
 impl<L: ClientListener> Member<L> {
     fn new(listener: L) -> Self {
-        Self { listener, secret: None, }
+        Self {
+            listener,
+            secret: None,
+        }
     }
 }
 
@@ -200,7 +197,9 @@ impl Host {
     }
 
     async fn on_start_game(client: Client, host: &mut Member<Self>, guest: &mut Member<Guest>) {
-        if !(host.secret.is_some() && guest.secret.is_some()) { return }
+        if !(host.secret.is_some() && guest.secret.is_some()) {
+            return;
+        }
 
         if let Some(guest_client) = guest.listener.take() {
             let host = Player::new(client, host.secret.take().unwrap());
@@ -229,22 +228,25 @@ impl Host {
         }
     }
 
-    async fn handle(client: Client, result: ClientListenResult, host: &mut Member<Self>, guest: &mut Member<Guest>) {
+    async fn handle(
+        client: Client,
+        result: ClientListenResult,
+        host: &mut Member<Self>,
+        guest: &mut Member<Guest>,
+    ) {
         match result {
-            Ok(event) => {
-                match event.kind {
-                    EventKind::SetSecret => Self::on_set_secret(client, host, &event.data).await,
-                    EventKind::StartGame => Self::on_start_game(client, host, guest).await,
-                    EventKind::Leave => {
-                        Self::on_leave(host, guest).await;
-                        todo!("Release client without callback release mechanism");
-                    }
-                    EventKind::CloseConnection => Self::on_leave(host, guest).await,
-                    _ => { host.listener.attach(client) }
+            Ok(event) => match event.kind {
+                EventKind::SetSecret => Self::on_set_secret(client, host, &event.data).await,
+                EventKind::StartGame => Self::on_start_game(client, host, guest).await,
+                EventKind::Leave => {
+                    Self::on_leave(host, guest).await;
+                    todo!("Release client without callback release mechanism");
                 }
-            }
+                EventKind::CloseConnection => Self::on_leave(host, guest).await,
+                _ => host.listener.attach(client),
+            },
             Err(ClientListenError::SocketStreamExhausted) => Self::on_leave(host, guest).await,
-            _ => { host.listener.attach(client) },
+            _ => host.listener.attach(client),
         }
     }
 }
@@ -283,7 +285,7 @@ impl Guest {
 
     async fn on_leave(host_client: &mut Client, guest: &mut Member<Guest>) {
         guest.secret = None;
-        
+
         // Since the guest client has been moved from the listener before,
         // there is no need to detach it.
 
@@ -295,22 +297,22 @@ impl Guest {
         guest_client: Client,
         host_client: &mut Client,
         result: ClientListenResult,
-        guest: &mut Member<Self>)
-    {
+        guest: &mut Member<Self>,
+    ) {
         match result {
-            Ok(event) => {
-                match event.kind {
-                    EventKind::SetSecret => Self::on_set_secret(guest_client, guest, &event.data).await,
-                    EventKind::Leave => {
-                        Self::on_leave(host_client, guest).await;
-                        todo!("Release client without callback release mechanism");
-                    }
-                    EventKind::CloseConnection => Self::on_leave(host_client, guest).await,
-                    _ => { guest.listener.attach(guest_client) }
+            Ok(event) => match event.kind {
+                EventKind::SetSecret => Self::on_set_secret(guest_client, guest, &event.data).await,
+                EventKind::Leave => {
+                    Self::on_leave(host_client, guest).await;
+                    todo!("Release client without callback release mechanism");
                 }
+                EventKind::CloseConnection => Self::on_leave(host_client, guest).await,
+                _ => guest.listener.attach(guest_client),
+            },
+            Err(ClientListenError::SocketStreamExhausted) => {
+                Self::on_leave(host_client, guest).await
             }
-            Err(ClientListenError::SocketStreamExhausted) => Self::on_leave(host_client, guest).await,
-            _ => { guest.listener.attach(guest_client) },
+            _ => guest.listener.attach(guest_client),
         }
     }
 }

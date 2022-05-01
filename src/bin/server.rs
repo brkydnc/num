@@ -1,19 +1,16 @@
 #![feature(once_cell)]
 #![feature(entry_insert)]
 
-use num::{
-    client::Client,
-    idler::Idler,
-};
+use log::{error, info};
+use num::{client::Client, idler::Idler};
 use tokio::net::{TcpListener, TcpStream};
-use log::{info, error};
 
 async fn handle_new_connection(tcp_stream: TcpStream) {
     match tokio_tungstenite::accept_async(tcp_stream).await {
         Ok(socket) => {
             let client = Client::new(socket);
             Idler::spawn(client);
-        },
+        }
         Err(cause) => {
             error!("Couldn't upgrade connection to websocket: {:?}", cause);
         }

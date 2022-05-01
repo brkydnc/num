@@ -2,7 +2,7 @@ use crate::event::{Event, EventKind};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::WebSocketStream;
-use tungstenite::{Message, Error as TungsteniteError };
+use tungstenite::{Error as TungsteniteError, Message};
 
 pub type WebSocket = WebSocketStream<TcpStream>;
 
@@ -29,10 +29,7 @@ impl Client {
     pub async fn listen(&mut self) -> ClientListenResult {
         use ClientListenError::*;
 
-        let message_read = self.socket
-            .next()
-            .await
-            .ok_or(SocketStreamExhausted)?;
+        let message_read = self.socket.next().await.ok_or(SocketStreamExhausted)?;
 
         let message = message_read.or(Err(MessageRead))?;
 
@@ -44,8 +41,7 @@ impl Client {
     }
 
     pub async fn emit(&mut self, event: &Event) -> Result<(), TungsteniteError> {
-        let json = serde_json::to_string(event)
-            .expect("Couldn't parse event into json string");
+        let json = serde_json::to_string(event).expect("Couldn't parse event into json string");
 
         self.socket.send(Message::Text(json)).await
     }

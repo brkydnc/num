@@ -37,7 +37,7 @@ impl Secret {
 
         let mut correct_position = 0;
         let mut wrong_position = 0;
-        
+
         for i in 0..3 {
             if secret[i] == guess[i] {
                 correct_position += 1;

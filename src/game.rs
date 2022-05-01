@@ -1,14 +1,14 @@
-use tokio::{
-    select,
-    time::{interval, Duration}
-};
 use crate::{
-    event::{Event, EventKind},
     client::{Client, ClientListenError},
+    event::{Event, EventKind},
     secret::Secret,
 };
 use log::info;
 use tokio::join;
+use tokio::{
+    select,
+    time::{interval, Duration},
+};
 
 pub struct Player {
     pub(self) client: Client,
@@ -24,15 +24,19 @@ impl Player {
 pub struct Game {
     host: Player,
     guest: Player,
-    host_turn: bool
+    host_turn: bool,
 }
 
 impl Game {
     pub fn new(host: Player, guest: Player) -> Self {
-        Self { host, guest, host_turn: true }
+        Self {
+            host,
+            guest,
+            host_turn: true,
+        }
     }
 
-    pub fn spawn_handler<R>(mut self, on_client_release: R) 
+    pub fn spawn_handler<R>(mut self, on_client_release: R)
     where
         R: Fn(Client) + Send + 'static,
     {

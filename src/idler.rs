@@ -1,7 +1,7 @@
 use crate::{
-    client::{Client, ClientListenError, ClientListenerState, ClientListener},
+    client::{Client, ClientListenError, ClientListener, ClientListenerState},
     event::EventKind,
-    lobby::{Lobby, Id},
+    lobby::{Id, Lobby},
 };
 
 pub struct Idler(ClientListenerState);
@@ -24,9 +24,7 @@ impl Idler {
 
     async fn on_join_lobby(client: Client, id_string: Option<String>) {
         // Parse the string into the corresponding id.
-        let id_parse = id_string
-            .map(|id| id.parse::<Id>().ok())
-            .flatten();
+        let id_parse = id_string.map(|id| id.parse::<Id>().ok()).flatten();
 
         if let Some(id) = id_parse {
             Lobby::send(id, client).await;
@@ -43,20 +41,19 @@ impl Idler {
                     EventKind::JoinLobby => Self::on_join_lobby(client, event.data).await,
 
                     // The state remains `Stop` so the client gets dropped.
-                    EventKind::CloseConnection => {},
+                    EventKind::CloseConnection => {}
 
                     // Continue listening only if the event is ignored.
-                    _ => { self.attach(client) }
+                    _ => self.attach(client),
                 },
 
                 // Cannot read the socket, the state remains `Stop`,
                 // so the client gets dropped.
-                Err(ClientListenError::SocketStreamExhausted) => {},
+                Err(ClientListenError::SocketStreamExhausted) => {}
 
                 // Continue listening
-                _ => { self.attach(client) }
+                _ => self.attach(client),
             }
         }
     }
 }
-
