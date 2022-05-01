@@ -9,20 +9,142 @@ use crate::{
     event::{Event, EventKind},
     secret::Secret,
     game::{Game, Player},
+    idler::Idler,
+};
+
+use std::{
+    collections::HashMap,
+    lazy::SyncLazy,
+    sync::{Arc, RwLock, atomic::{AtomicUsize, Ordering}},
+    
 };
 
 use tokio::{
-    sync::mpsc::{
-        Sender,
-        Receiver,
-        channel
-    },
+    sync::mpsc::{Sender, Receiver, channel},
     select,
     join,
 };
 
 use log::info;
 use futures_util::future::OptionFuture;
+
+pub type Id = usize;
+type LobbyIndex = Arc<RwLock<HashMap<Id, Sender<Client>>>>;
+pub static LOBBIES: SyncLazy<LobbyIndex> = SyncLazy::new(|| {
+    Arc::new(RwLock::new(HashMap::new()))
+});
+
+pub struct Lobby {
+    id: Id,
+    host: Member<Host>,
+    guest: Member<Guest>,
+}
+
+impl Lobby {
+    fn new(creator: Client) -> Self {
+        static ID: AtomicUsize = AtomicUsize::new(0);
+
+        Self {
+            id: ID.fetch_add(1, Ordering::Relaxed),
+            host: Member::new(Host::new(creator)),
+            guest: Member::new(Guest::new())
+        }
+    }
+
+    async fn listen(mut self, mut receiver: Receiver<Client>) {
+        info!("A lobby handler has just been spawned");
+        // let _ = self.host.emit(&Event::from(EventKind::CreateLobby)).await;
+
+        // A lobby is guaranteed to have a host connected. Therefore the lobby
+        // task must live as long as the host is being listened. A `while let`
+        // is handy for this case.
+        while let Some(mut host_client) = self.host.listener.take() {
+            // A guest may or may not to be connected. Also, a guest must be
+            // listened with a host concurrently. Thus, they must be put into the
+            // same select body. The `OptionFuture` utility allows listening a
+            // possibly connected guest along with the host. If there is a guest,
+            // and the guest sends an event, the future below will return Some(result).
+            // 
+            // The future accesses guest_client with a mutable reference, If the
+            // guest_client was moved, and the `host_client` handlers get executed,
+            // the handlers would try to access the guest_client via guest listener
+            // (self.guest.listener), and there would be no client in it, since 
+            // it was moved.
+            let guest_listen_future: OptionFuture<_> = self.guest.listener
+                .client_mut()
+                .map(|client| client.listen())
+                .into();
+            
+            // Here, the host_client has already been moved from its listener,
+            // and the guest_client will be moved if it is relevant.
+            //
+            // Handler functions will attach the clients to the appropriate listeners
+            // if necessarry. So no need to attach them here by hand.
+            select! {
+                result = host_client.listen() => {
+                    Host::handle(host_client, result, &mut self.host, &mut self.guest).await;
+                }
+                Some(result) = guest_listen_future => {
+                    let guest_client = self.guest.listener.take().unwrap();
+                    Guest::handle(guest_client, &mut host_client, result, &mut self.guest).await;
+                }
+                Some(client) = receiver.recv() => {
+                    // If there is already a guest, spawn an idle handler for
+                    // the incoming client.
+                    if self.guest.listener.is_listening() {
+                        Idler::spawn(client);
+                    } else {
+                        // let guest_join_event = Event::from(EventKind::GuestJoin);
+                        // let notify_host = self.host.emit(&guest_join_event);
+
+                        // let join_lobby_event = Event::from(EventKind::JoinLobby);
+                        // let notify_guest = client.emit(&join_lobby_event);
+
+                        // let _ = join!(notify_host, notify_guest);
+
+                        self.guest.listener.attach(client);
+                    }
+                },
+            }
+
+        }
+
+        {
+            LOBBIES
+                .try_write()
+                .expect("Error acquiring the lobby index lock")
+                .remove(&self.id);
+        }
+
+        info!("A lobby handler has just been destroyed");
+    }
+
+    pub fn spawn(creator: Client) {
+        let (sender, receiver) = channel(1);
+        let lobby = Lobby::new(creator);
+
+        {
+            LOBBIES
+                .try_write()
+                .expect("Error acquiring the lobby index lock")
+                .entry(lobby.id)
+                .insert_entry(sender);
+        }
+
+        tokio::spawn(lobby.listen(receiver));
+    }
+}
+
+struct Member<L: ClientListener> {
+    listener: L,
+    secret: Option<Secret>,
+}
+
+impl<L: ClientListener> Member<L> {
+    fn new(listener: L) -> Self {
+        Self { listener, secret: None, }
+    }
+}
 
 struct Host(ClientListenerState);
 
@@ -152,8 +274,7 @@ impl Guest {
         guest_client: Client,
         host_client: &mut Client,
         result: ClientListenResult,
-        guest: &mut Member<Self>
-    ) -> ()
+        guest: &mut Member<Self>)
     {
         match result {
             Ok(event) => {
@@ -170,112 +291,5 @@ impl Guest {
             Err(ClientListenError::SocketStreamExhausted) => Self::on_leave(host_client, guest).await,
             _ => { guest.listener.attach(guest_client) },
         }
-    }
-}
-
-struct Member<L: ClientListener> {
-    listener: L,
-    secret: Option<Secret>,
-}
-
-impl<L: ClientListener> Member<L> {
-    fn new(listener: L) -> Self {
-        Self { listener, secret: None, }
-    }
-}
-
-pub struct Lobby {
-    host: Member<Host>,
-    guest: Member<Guest>,
-}
-
-impl Lobby {
-    pub fn new(creator: Client) -> Self {
-        Self {
-            host: Member::new(Host::new(creator)),
-            guest: Member::new(Guest::new())
-        }
-    }
-
-    async fn listen<D, R>(
-        mut self,
-        mut receiver: Receiver<Client>,
-        on_destroyed: D,
-        on_client_release: R,
-    ) where
-        D: FnOnce() + Send + 'static,
-        R: Fn(Client) + Send + 'static,
-    {
-        info!("A lobby handler has just been spawned");
-        // let _ = self.host.emit(&Event::from(EventKind::CreateLobby)).await;
-
-        // A lobby is guaranteed to have a host connected. Therefore the lobby
-        // task must live as long as the host is being listened. A `while let`
-        // is handy for this case.
-        while let Some(mut host_client) = self.host.listener.take() {
-            // A guest may or may not to be connected. Also, a guest must be
-            // listened with a host concurrently. Thus, they must be put into the
-            // same select body. The `OptionFuture` utility allows listening a
-            // possibly connected guest along with the host. If there is a guest,
-            // and the guest sends an event, the future below will return Some(result).
-            // 
-            // The future accesses guest_client with a mutable reference, If the
-            // guest_client was moved, and the `host_client` handlers get executed,
-            // the handlers would try to access the guest_client via guest listener
-            // (self.guest.listener), and there would be no client in it, since 
-            // it was moved.
-            let guest_listen_future: OptionFuture<_> = self.guest.listener
-                .client_mut()
-                .map(|client| client.listen())
-                .into();
-            
-            // Here, the host_client has already been moved from its listener,
-            // and the guest_client will be moved if it is relevant.
-            //
-            // Handler functions will attach the clients to the appropriate listeners
-            // if necessarry. So no need to attach them here by hand.
-            select! {
-                result = host_client.listen() => {
-                    Host::handle(host_client, result, &mut self.host, &mut self.guest).await;
-                }
-                Some(result) = guest_listen_future => {
-                    let guest_client = self.guest.listener.take().unwrap();
-                    Guest::handle(guest_client, &mut host_client, result, &mut self.guest).await;
-                }
-                Some(client) = receiver.recv() => {
-                    // If there is already a guest, spawn an idle handler for
-                    // the incoming client.
-                    if self.guest.listener.is_listening() {
-                        on_client_release(client);
-                    } else {
-                        // let guest_join_event = Event::from(EventKind::GuestJoin);
-                        // let notify_host = self.host.emit(&guest_join_event);
-
-                        // let join_lobby_event = Event::from(EventKind::JoinLobby);
-                        // let notify_guest = client.emit(&join_lobby_event);
-
-                        // let _ = join!(notify_host, notify_guest);
-
-                        self.guest.listener.attach(client);
-                    }
-                },
-            }
-
-        }
-
-        on_destroyed();
-        info!("A lobby handler has just been destroyed");
-    }
-
-    pub fn spawn<D, R>(self, on_destroyed: D, on_client_release: R) -> Sender<Client>
-    where
-        D: FnOnce() + Send + 'static,
-        R: Fn(Client) + Send + 'static,
-    {
-        let (sender, receiver) = channel(1);
-
-        tokio::spawn(self.listen(receiver, on_destroyed, on_client_release));
-
-        sender
     }
 }
