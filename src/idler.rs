@@ -1,8 +1,7 @@
-use log::warn;
 use crate::{
     client::{Client, ClientListenError, ClientListenerState, ClientListener},
     event::EventKind,
-    lobby::{Lobby, LOBBIES, Id},
+    lobby::{Lobby, Id},
 };
 
 pub struct Idler(ClientListenerState);
@@ -23,10 +22,6 @@ impl Idler {
         tokio::spawn(listener.listen());
     }
 
-    async fn on_create_lobby(client: Client) {
-        let sender = Lobby::spawn(client);
-    }
-
     async fn on_join_lobby(client: Client, id_string: Option<String>) {
         // Parse the string into the corresponding id.
         let id_parse = id_string
@@ -34,26 +29,7 @@ impl Idler {
             .flatten();
 
         if let Some(id) = id_parse {
-            // Try to acquire the Sender of the lobby of the corresponding id.
-            let client_sender = {
-                let lobbies = LOBBIES
-                    .try_read()
-                    .expect("Error acquiring the lobby index lock");
-
-                lobbies.get(&id).cloned()
-            };
-
-            if let Some(sender) = client_sender {
-                if let Err(error) = sender.send(client).await {
-                    // If the send was unsuccessful, spawn an idle handler for
-                    // the client.
-                    Self::spawn(error.0);
-
-                    // This may be an unwanted behavior, so logging a warning
-                    // might be a good indicator (for the future).
-                    warn!("Couln't send the client through the lobby sender.");
-                }
-            }
+            Lobby::send(id, client).await;
         }
     }
 
@@ -63,7 +39,7 @@ impl Idler {
                 Ok(event) => match event.kind {
                     // Because the client is moved, the state remains `Stop`
                     // for the two arms below
-                    EventKind::CreateLobby => Self::on_create_lobby(client).await,
+                    EventKind::CreateLobby => Lobby::spawn(client),
                     EventKind::JoinLobby => Self::on_join_lobby(client, event.data).await,
 
                     // The state remains `Stop` so the client gets dropped.

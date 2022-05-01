@@ -11,26 +11,24 @@ use crate::{
     game::{Game, Player},
     idler::Idler,
 };
-
 use std::{
     collections::HashMap,
     lazy::SyncLazy,
     sync::{Arc, RwLock, atomic::{AtomicUsize, Ordering}},
     
 };
-
 use tokio::{
     sync::mpsc::{Sender, Receiver, channel},
     select,
     join,
 };
-
-use log::info;
 use futures_util::future::OptionFuture;
+use log::{info, warn};
 
 pub type Id = usize;
 type LobbyIndex = Arc<RwLock<HashMap<Id, Sender<Client>>>>;
-pub static LOBBIES: SyncLazy<LobbyIndex> = SyncLazy::new(|| {
+
+static LOBBIES: SyncLazy<LobbyIndex> = SyncLazy::new(|| {
     Arc::new(RwLock::new(HashMap::new()))
 });
 
@@ -49,6 +47,44 @@ impl Lobby {
             host: Member::new(Host::new(creator)),
             guest: Member::new(Guest::new())
         }
+    }
+
+    pub async fn send(id: Id, client: Client) {
+        // Try to acquire the Sender of the lobby of the corresponding id.
+        let client_sender = {
+            LOBBIES
+                .try_read()
+                .expect("Error acquiring the lobby index lock")
+                .get(&id)
+                .cloned()
+        };
+
+        if let Some(sender) = client_sender {
+            if let Err(error) = sender.send(client).await {
+                // If the send was unsuccessful, spawn an idle handler for
+                // the client.
+                Idler::spawn(error.0);
+
+                // This may be an unwanted behavior, so logging a warning
+                // might be a good indicator (for the future).
+                warn!("Couln't send the client through the lobby sender.");
+            }
+        }
+    }
+
+    pub fn spawn(creator: Client) {
+        let (sender, receiver) = channel(1);
+        let lobby = Lobby::new(creator);
+
+        {
+            LOBBIES
+                .try_write()
+                .expect("Error acquiring the lobby index lock")
+                .entry(lobby.id)
+                .insert_entry(sender);
+        }
+
+        tokio::spawn(lobby.listen(receiver));
     }
 
     async fn listen(mut self, mut receiver: Receiver<Client>) {
@@ -117,21 +153,6 @@ impl Lobby {
         }
 
         info!("A lobby handler has just been destroyed");
-    }
-
-    pub fn spawn(creator: Client) {
-        let (sender, receiver) = channel(1);
-        let lobby = Lobby::new(creator);
-
-        {
-            LOBBIES
-                .try_write()
-                .expect("Error acquiring the lobby index lock")
-                .entry(lobby.id)
-                .insert_entry(sender);
-        }
-
-        tokio::spawn(lobby.listen(receiver));
     }
 }
 
