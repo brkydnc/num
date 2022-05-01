@@ -65,6 +65,8 @@ impl Host {
 
             todo!("Emit start game event to members and spawn without callback release mechanism");
             // Game::new(host, guest).spawn_handler();
+        } else {
+            host.listener.attach(client);
         }
     }
 
