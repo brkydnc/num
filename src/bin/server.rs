@@ -2,7 +2,7 @@
 #![feature(entry_insert)]
 
 use num::{
-    client::{Client, ClientListenError, ClientListenerState},
+    client::{Client, ClientListenError, ClientListenerState, ClientListener},
     event::EventKind,
     lobby::Lobby,
     id::{Id, IdGenerator},
@@ -23,18 +23,26 @@ type LobbyIndex = Arc<RwLock<HashMap<Id, Sender<Client>>>>;
 static LOBBIES: SyncLazy<LobbyIndex> = SyncLazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 static ID_GENERATOR: SyncLazy<IdGenerator> = SyncLazy::new(|| IdGenerator::new());
 
-struct Idler {
-    state: ClientListenerState
+struct Idler(ClientListenerState);
+
+impl ClientListener for Idler {
+    fn state(&self) -> &ClientListenerState {
+        &self.0
+    }
+
+    fn state_mut(&mut self) -> &mut ClientListenerState {
+        &mut self.0
+    }
 }
 
 impl Idler {
     fn new(client: Client) -> Self {
-        Self { state: ClientListenerState::Listen(client) }
+        Self(ClientListenerState::Listen(client))
     }
 
     async fn spawn(mut self) {
         // Replace self.state with `Stop` temporarily.
-        while let ClientListenerState::Listen(mut client) = self.state.replace() {
+        while let Some(mut client) = self.take() {
             match client.listen().await {
                 Ok(event) => match event.kind {
                     // Because the client is moved, self.state remains `Stop`
@@ -46,7 +54,7 @@ impl Idler {
                     EventKind::CloseConnection => {},
 
                     // Continue listening only if the event is ignored.
-                    _ => { self.state.listen(client) }
+                    _ => { self.attach(client) }
                 },
 
                 // Cannot read the socket, self.state remains `Stop`,
@@ -54,7 +62,7 @@ impl Idler {
                 Err(ClientListenError::SocketStreamExhausted) => {},
 
                 // Continue listening
-                _ => { self.state.listen(client) }
+                _ => { self.attach(client) }
             }
         }
     }
