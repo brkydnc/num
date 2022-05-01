@@ -4,14 +4,12 @@ use tokio::net::TcpStream;
 use tokio_tungstenite::WebSocketStream;
 use tungstenite::{Error as TungsteniteError, Message};
 
-pub type WebSocket = WebSocketStream<TcpStream>;
-
 pub type ClientListenResult = Result<Event, ClientListenError>;
 
 // TODO: The `WebSocket` type is about 300 bytes. And the code has a lot of
 // move semantics. Maybe it is better putting the inner socket behind a `Box`.
 pub struct Client {
-    pub socket: WebSocket,
+    pub socket: WebSocketStream<TcpStream>,
 }
 
 pub enum ClientListenError {
@@ -22,7 +20,7 @@ pub enum ClientListenError {
 }
 
 impl Client {
-    pub fn new(socket: WebSocket) -> Self {
+    pub fn new(socket: WebSocketStream<TcpStream>) -> Self {
         Self { socket }
     }
 
