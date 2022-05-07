@@ -83,6 +83,12 @@ pub trait ClientListener {
         }
     }
 
+    /// If a client is being listened, returns the bundle of the client and a
+    /// mutable reference to the listener, replaces the listener state with `Stop`.
+    fn bundle(&mut self) -> Option<ClientListenerBundle<Self>> where Self: Sized{
+        self.take().map(|client| ClientListenerBundle { listener: self, client })
+    }
+
     /// If a client is being listened, this method returns a mutable reference
     /// to the client.
     fn client_mut(&mut self) -> Option<&mut Client> {
@@ -91,14 +97,19 @@ pub trait ClientListener {
             ClientListenerState::Stop => None,
         }
     }
+}
 
-    /// Drops the client if it exists. And replaces the state with `Stop`
-    fn detach(&mut self) {
-        self.take();
-    }
+/// Bundles a client with its listener. Since the client is moved into the bundle,
+/// the state of the listener is `Stop`. Later the client can be attached to the
+/// listener again.
+pub struct ClientListenerBundle<'l, L: ClientListener> {
+    pub listener: &'l mut L,
+    pub client: Client,
+}
 
-    /// Wraps the new client with `Listen`, drops the old one if it exists.
-    fn attach(&mut self, client: Client) {
-        let _ = std::mem::replace(self.state_mut(), ClientListenerState::Listen(client));
+impl<L: ClientListener> ClientListenerBundle<'_, L> {
+    /// Attaches the client to the listener.
+    pub fn reunite(self) {
+        self.listener.attach(self.client);
     }
 }
