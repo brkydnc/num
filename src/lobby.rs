@@ -118,6 +118,7 @@ impl Lobby {
                 Some(result) = guest_listen_future => {
                     let guest_client = self.guest.listener.take().unwrap();
                     Guest::handle(guest_client, &mut host_client, result, &mut self.guest).await;
+                    self.host.listener.attach(host_client);
                 }
                 Some(client) = receiver.recv() => {
                     // If there is already a guest, spawn an idle handler for
