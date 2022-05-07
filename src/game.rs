@@ -1,3 +1,4 @@
+use log::debug;
 use crate::{
     client::{Client, ClientListenError, ClientListenerState, ClientListener, ClientListenResult, ClientListenerBundle},
     event::EventKind,
@@ -138,6 +139,8 @@ impl Game {
     }
 
     pub async fn listen(mut self) {
+        debug!("Listening to player events in a game");
+
         while let (Some(mut host), Some(mut guest)) = (self.host.bundle(), self.guest.bundle()) {
             select! {
                 _ = self.turn.interval_tick() => {
@@ -151,5 +154,7 @@ impl Game {
                 },
             }
         }
+
+        debug!("Dropping a game listener");
     }
 }

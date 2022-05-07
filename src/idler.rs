@@ -1,3 +1,4 @@
+use log::debug;
 use crate::{
     client::{Client, ClientListenError, ClientListener, ClientListenerState},
     event::EventKind,
@@ -32,6 +33,8 @@ impl Idler {
     }
 
     async fn listen(mut self) {
+        debug!("Listening to an idle client");
+
         while let Some(mut client) = self.take() {
             match client.listen().await {
                 Ok(event) => match event.kind {
@@ -55,5 +58,7 @@ impl Idler {
                 _ => self.attach(client),
             }
         }
+
+        debug!("An idler listener dropped");
     }
 }

@@ -6,7 +6,7 @@ use crate::{
     secret::Secret,
 };
 use futures_util::future::OptionFuture;
-use log::{info, warn};
+use log::{warn, debug};
 use std::{
     collections::HashMap,
     lazy::SyncLazy,
@@ -15,10 +15,7 @@ use std::{
         Arc, RwLock,
     },
 };
-use tokio::{
-    join, select,
-    sync::mpsc::{channel, Receiver, Sender},
-};
+use tokio::{select, sync::mpsc::{channel, Receiver, Sender}};
 
 pub type Id = usize;
 type LobbyIndex = Arc<RwLock<HashMap<Id, Sender<Client>>>>;
@@ -61,6 +58,8 @@ impl Lobby {
                 // This may be an unwanted behavior, so logging a warning
                 // might be a good indicator (for the future).
                 warn!("Couln't send the client through the lobby sender.");
+            } else {
+                debug!("A member has just been sent to a lobby");
             }
         }
     }
@@ -81,7 +80,8 @@ impl Lobby {
     }
 
     async fn listen(mut self, mut receiver: Receiver<Client>) {
-        info!("A lobby handler has just been spawned");
+        debug!("Listening to member events in a lobby");
+
         // let _ = self.host.emit(&Event::from(EventKind::CreateLobby)).await;
 
         // A lobby is guaranteed to have a host connected. Therefore the lobby
@@ -124,6 +124,7 @@ impl Lobby {
                     // the incoming client.
                     if self.guest.listener.is_listening() {
                         Idler::spawn(client);
+                        debug!("Guest join rejected, the lobby is full");
                     } else {
                         // let guest_join_event = Event::from(EventKind::GuestJoin);
                         // let notify_host = self.host.emit(&guest_join_event);
@@ -134,6 +135,8 @@ impl Lobby {
                         // let _ = join!(notify_host, notify_guest);
 
                         self.guest.listener.attach(client);
+
+                        debug!("Guest join accepted");
                     }
                 },
             }
@@ -146,7 +149,7 @@ impl Lobby {
                 .remove(&self.id);
         }
 
-        info!("A lobby handler has just been destroyed");
+        debug!("Dropping a lobby listener");
     }
 }
 
@@ -206,7 +209,7 @@ impl Host {
             let guest = Player::new(guest_client, guest.secret.take().unwrap());
 
             Game::spawn(host, guest);
-            todo!("Emit start game event to members and spawn without callback release mechanism");
+            warn!("Emit start game event to members and spawn without callback release mechanism");
         } else {
             host.listener.attach(client);
         }
@@ -223,7 +226,7 @@ impl Host {
 
             // The guest member is completely empty now.
 
-            todo!("Emit host leave to the guest");
+            warn!("Emit host leave to the guest");
             // let _ = guest_client.emit(&Event::from(EventKind::OpponentLeave)).await;
         }
     }
@@ -289,7 +292,7 @@ impl Guest {
         // Since the guest client has been moved from the listener before,
         // there is no need to detach it.
 
-        todo!("Emit guest leave to the host");
+        warn!("Emit guest leave to the host");
         // let _ = host_client.emit(&Event::from(EventKind::OpponentLeave)).await;
     }
 
