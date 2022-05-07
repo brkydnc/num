@@ -43,7 +43,7 @@ impl Lobby {
         // Try to acquire the Sender of the lobby of the corresponding id.
         let client_sender = {
             LOBBIES
-                .try_read()
+                .read()
                 .expect("Error acquiring the lobby index lock")
                 .get(&id)
                 .cloned()
@@ -70,7 +70,7 @@ impl Lobby {
 
         {
             LOBBIES
-                .try_write()
+                .write()
                 .expect("Error acquiring the lobby index lock")
                 .entry(lobby.id)
                 .insert_entry(sender);
@@ -151,7 +151,7 @@ impl Lobby {
 
         {
             LOBBIES
-                .try_write()
+                .write()
                 .expect("Error acquiring the lobby index lock")
                 .remove(&self.id);
         }
