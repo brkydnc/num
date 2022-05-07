@@ -29,8 +29,11 @@ async fn main() {
         .expect("Error binding to address");
 
     info!("Listening to address {}", ADDRESS);
-    while let Ok((stream, _)) = listener.accept().await {
-        tokio::spawn(handle_new_connection(stream));
-        debug!("Received a new connection request")
+
+    loop {
+        if let Ok((stream, _)) = listener.accept().await {
+            tokio::spawn(handle_new_connection(stream));
+            debug!("Received a new connection request")
+        }
     }
 }
