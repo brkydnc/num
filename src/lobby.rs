@@ -82,7 +82,12 @@ impl Lobby {
     async fn listen(mut self, mut receiver: Receiver<Client>) {
         debug!("Listening to member events in a lobby");
 
-        // let _ = self.host.emit(&Event::from(EventKind::CreateLobby)).await;
+        // Notify host
+        let _ = self.host.listener
+            .client_mut()
+            .unwrap()
+            .emit(&Event::from(EventKind::CreateLobby).with(self.id.to_string()))
+            .await;
 
         // A lobby is guaranteed to have a host connected. Therefore the lobby
         // task must live as long as the host is being listened. A `while let`
