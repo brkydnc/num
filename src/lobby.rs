@@ -205,8 +205,8 @@ impl Host {
             let host = Player::new(client, host.secret.take().unwrap());
             let guest = Player::new(guest_client, guest.secret.take().unwrap());
 
+            Game::spawn(host, guest);
             todo!("Emit start game event to members and spawn without callback release mechanism");
-            // Game::new(host, guest).spawn_handler();
         } else {
             host.listener.attach(client);
         }
