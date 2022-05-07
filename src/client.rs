@@ -9,7 +9,7 @@ pub type ClientListenResult = Result<Event, ClientListenError>;
 // TODO: The `WebSocket` type is about 300 bytes. And the code has a lot of
 // move semantics. Maybe it is better putting the inner socket behind a `Box`.
 pub struct Client {
-    pub socket: WebSocketStream<TcpStream>,
+    socket: WebSocketStream<TcpStream>,
 }
 
 pub enum ClientListenError {
@@ -28,7 +28,6 @@ impl Client {
         use ClientListenError::*;
 
         let message_read = self.socket.next().await.ok_or(SocketStreamExhausted)?;
-
         let message = message_read.or(Err(MessageRead))?;
 
         match message {
