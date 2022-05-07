@@ -135,6 +135,7 @@ impl Lobby {
                         // let _ = join!(notify_host, notify_guest);
 
                         self.guest.listener.attach(client);
+                        self.host.listener.attach(host_client);
 
                         debug!("Guest join accepted");
                     }
