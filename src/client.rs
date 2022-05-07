@@ -56,18 +56,24 @@ pub enum ClientListenerState {
 
 /// A utility interface for manuplating the types that contain `ClientListenerState`.
 pub trait ClientListener {
-    /// Returns a shared reference to the inner ClientListenerState.
+    /// Returns a reference to the inner ClientListenerState.
     fn state(&self) -> &ClientListenerState;
 
-    /// Returns an exclusive reference to the inner ClientListenerState.
+    /// Returns a mutable reference to the inner ClientListenerState.
     fn state_mut(&mut self) -> &mut ClientListenerState;
 
-    /// Returnst true if the inner state wraps a client with `Listen`.
+    /// Return true if the state is `Listen(Client)`
     fn is_listening(&self) -> bool {
         matches!(self.state(), ClientListenerState::Listen(_))
     }
 
-    /// Returns the current state, and replaces it with the `Stop` state.
+    /// Wraps the new client with `Listen`, drops the old one if it exists.
+    fn attach(&mut self, client: Client) {
+        let _ = std::mem::replace(self.state_mut(), ClientListenerState::Listen(client));
+    }
+
+    /// Returns the current client if the current state is `Listen(Client)`,
+    /// and replaces the state with `Stop`.
     fn take(&mut self) -> Option<Client> {
         let state = std::mem::replace(self.state_mut(), ClientListenerState::Stop);
 
