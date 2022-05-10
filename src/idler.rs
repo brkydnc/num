@@ -1,8 +1,8 @@
 use log::debug;
 use crate::{
+    Directive,
+    lobby::Lobby,
     client::{Client, ClientListenError, ClientListener, ClientListenerState},
-    event::EventKind,
-    lobby::{Id, Lobby},
 };
 
 pub struct Idler(ClientListenerState);
@@ -23,36 +23,29 @@ impl Idler {
         tokio::spawn(listener.listen());
     }
 
-    async fn on_join_lobby(client: Client, id_string: Option<String>) {
-        // Parse the string into the corresponding id.
-        let id_parse = id_string.map(|id| id.parse::<Id>().ok()).flatten();
-
-        if let Some(id) = id_parse {
-            Lobby::send(id, client).await;
-        }
-    }
-
     async fn listen(mut self) {
         debug!("Listening to an idle client");
 
         while let Some(mut client) = self.take() {
+            use Directive::*;
+
             match client.listen().await {
-                Ok(event) => match event.kind {
+                Ok(directive) => match directive {
                     // Because the client is moved, the state remains `Stop`
                     // for the two arms below
-                    EventKind::CreateLobby => Lobby::spawn(client),
-                    EventKind::JoinLobby => Self::on_join_lobby(client, event.data).await,
+                    CreateLobby => Lobby::spawn(client),
+                    JoinLobby { lobby_id } => Lobby::send(lobby_id, client).await,
 
                     // The state remains `Stop` so the client gets dropped.
-                    EventKind::CloseConnection => {}
+                    CloseConnection => {}
 
-                    // Continue listening only if the event is ignored.
+                    // Continue listening only if the directive is ignored.
                     _ => self.attach(client),
                 },
 
                 // Cannot read the socket, the state remains `Stop`,
                 // so the client gets dropped.
-                Err(ClientListenError::SocketStreamExhausted) => {}
+                Err(ClientListenError::SocketExhausted) => {}
 
                 // Continue listening
                 _ => self.attach(client),

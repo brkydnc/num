@@ -1,9 +1,16 @@
 use log::debug;
 use crate::{
-    client::{Client, ClientListenError, ClientListenerState, ClientListener, ClientListenResult, ClientListenerBundle},
-    event::EventKind,
+    Directive,
     secret::Secret,
     idler::Idler,
+    client::{
+        Client,
+        ClientListenError,
+        ClientListenerState,
+        ClientListener,
+        ClientListenResult,
+        ClientListenerBundle
+    },
 };
 use tokio::{
     select,
@@ -45,10 +52,11 @@ impl Player {
         can_guess: bool,
         turn: &mut Turn,
     ) {
+        use Directive::*;
         match result {
-            Ok(event) => {
-                match event.kind {
-                    EventKind::Guess => {
+            Ok(directive) => {
+                match directive {
+                    Guess { secret }=> {
                         if !can_guess {
                             player.reunite();
                             opponent.reunite();
@@ -56,27 +64,23 @@ impl Player {
                         }
 
                         // TODO: Notify guesses
+                        let (correct, _wrong) = player.listener.secret
+                            .score(&secret);
 
-                        if let Some(string) = event.data {
-                            if let Some(guess) = Secret::parse(string) {
-                                let (correct, _wrong) = player.listener.secret.score(&guess);
-
-                                // The winner is the host
-                                if correct == 3 {
-                                    Idler::spawn(player.client);
-                                    Idler::spawn(opponent.client);
-                                    return;
-                                }
-
-                                turn.next();
-                            }
+                        // The winner is the host
+                        if correct == 3 {
+                            Idler::spawn(player.client);
+                            Idler::spawn(opponent.client);
+                            return;
                         }
+
+                        turn.next();
                     }
-                    EventKind::Leave => {
+                    Leave => {
                         Idler::spawn(player.client);
                         Self::on_leave(opponent).await;
                     }
-                    EventKind::CloseConnection => {
+                    CloseConnection => {
                         Self::on_leave(opponent).await;
                     }
                     _ => {
@@ -85,7 +89,7 @@ impl Player {
                     }
                 }
             }
-            Err(ClientListenError::SocketStreamExhausted) => {
+            Err(ClientListenError::SocketExhausted) => {
                 Self::on_leave(opponent).await;
             }
             _ => {
@@ -139,7 +143,7 @@ impl Game {
     }
 
     pub async fn listen(mut self) {
-        debug!("Listening to player events in a game");
+        debug!("Listening to player directives in a game");
 
         while let (Some(mut host), Some(mut guest)) = (self.host.bundle(), self.guest.bundle()) {
             select! {

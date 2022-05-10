@@ -1,11 +1,10 @@
-use crate::event::{Event, EventKind};
-use crate::Notification;
+use crate::{Directive, Notification};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::WebSocketStream;
 use tungstenite::{Error as TungsteniteError, Message};
 
-pub type ClientListenResult = Result<Event, ClientListenError>;
+pub type ClientListenResult = Result<Directive, ClientListenError>;
 
 // TODO: The `WebSocket` type is about 300 bytes. And the code has a lot of
 // move semantics. Maybe it is better putting the inner socket behind a `Box`.
@@ -14,10 +13,10 @@ pub struct Client {
 }
 
 pub enum ClientListenError {
-    SocketStreamExhausted,
-    MessageRead,
-    EventParse,
-    UnknownEvent,
+    SocketExhausted,
+    InvalidMessage,
+    UnknownMessage,
+    InvalidDirective,
 }
 
 impl Client {
@@ -28,13 +27,16 @@ impl Client {
     pub async fn listen(&mut self) -> ClientListenResult {
         use ClientListenError::*;
 
-        let message_read = self.socket.next().await.ok_or(SocketStreamExhausted)?;
-        let message = message_read.or(Err(MessageRead))?;
+        let message = self.socket
+            .next()
+            .await
+            .ok_or(SocketExhausted)?
+            .or(Err(InvalidMessage))?;
 
         match message {
-            Message::Text(ref text) => serde_json::from_str(text).or(Err(EventParse)),
-            Message::Close(_) => Ok(Event::from(EventKind::CloseConnection)),
-            _ => Err(UnknownEvent),
+            Message::Text(ref text) => serde_json::from_str(text).or(Err(InvalidDirective)),
+            Message::Close(_) => Ok(Directive::CloseConnection),
+            _ => Err(UnknownMessage),
         }
     }
 

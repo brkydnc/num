@@ -1,7 +1,6 @@
 use crate::{
-    Notification,
+    Directive, Notification,
     client::{Client, ClientListenError, ClientListenResult, ClientListener, ClientListenerState},
-    event::{Event, EventKind},
     game::{Game, Player},
     idler::Idler,
     secret::Secret,
@@ -81,7 +80,7 @@ impl Lobby {
     }
 
     async fn listen(mut self, mut receiver: Receiver<Client>) {
-        debug!("Listening to member events in a lobby");
+        debug!("Listening to member directives in a lobby");
 
         let _ = self.host.listener
             .client_mut()
@@ -97,7 +96,8 @@ impl Lobby {
             // listened with a host concurrently. Thus, they must be put into the
             // same select body. The `OptionFuture` utility allows listening a
             // possibly connected guest along with the host. If there is a guest,
-            // and the guest sends an event, the future below will return Some(result).
+            // and the guest sends a directive, the future below will return
+            // Some(result).
             //
             // The future accesses guest_client with a mutable reference, If the
             // guest_client was moved, and the `host_client` handlers get executed,
@@ -188,18 +188,9 @@ impl Host {
         Self(ClientListenerState::Listen(client))
     }
 
-    async fn on_set_secret(mut client: Client, member: &mut Member<Self>, data: &Option<String>) {
-        // Parse the given string and set the new secret if possible.
-        if let Some(string) = data.as_ref() {
-            if let Some(secret) = Secret::parse(string) {
-                let _ = client.notify(Notification::SecretSet { secret: &secret }).await;
-                member.secret = Some(secret);
-            }
-        }
-
-        // Since this event does not require the client to be moved elsewhere,
-        // attach it to the member's listener, so that its events are received
-        // afterwards.
+    async fn on_set_secret(mut client: Client, member: &mut Member<Self>, secret: Secret) {
+        let _ = client.notify(Notification::SecretSet { secret: &secret }).await;
+        member.secret = Some(secret);
         member.listener.attach(client);
     }
 
@@ -213,7 +204,7 @@ impl Host {
             let guest = Player::new(guest_client, guest.secret.take().unwrap());
 
             Game::spawn(host, guest);
-            warn!("Emit start game event to members and spawn without callback release mechanism");
+            warn!("Send start game notification to members and spawn without callback release mechanism");
         } else {
             host.listener.attach(client);
         }
@@ -238,18 +229,20 @@ impl Host {
         host: &mut Member<Self>,
         guest: &mut Member<Guest>,
     ) {
+        use Directive::*;
+
         match result {
-            Ok(event) => match event.kind {
-                EventKind::SetSecret => Self::on_set_secret(client, host, &event.data).await,
-                EventKind::StartGame => Self::on_start_game(client, host, guest).await,
-                EventKind::Leave => {
+            Ok(directive) => match directive {
+                SetSecret { secret } => Self::on_set_secret(client, host, secret).await,
+                StartGame => Self::on_start_game(client, host, guest).await,
+                Leave => {
                     Self::on_leave(host, guest).await;
                     Idler::spawn(client);
                 }
-                EventKind::CloseConnection => Self::on_leave(host, guest).await,
+                CloseConnection => Self::on_leave(host, guest).await,
                 _ => host.listener.attach(client),
             },
-            Err(ClientListenError::SocketStreamExhausted) => Self::on_leave(host, guest).await,
+            Err(ClientListenError::SocketExhausted) => Self::on_leave(host, guest).await,
             _ => host.listener.attach(client),
         }
     }
@@ -272,48 +265,34 @@ impl Guest {
         Self(ClientListenerState::Stop)
     }
 
-    async fn on_set_secret(mut client: Client, member: &mut Member<Self>, data: &Option<String>) {
-        // Parse the given string and set the new secret if possible.
-        if let Some(string) = data.as_ref() {
-            if let Some(secret) = Secret::parse(string) {
-                let _ = client.notify(Notification::SecretSet { secret: &secret }).await;
-                member.secret = Some(secret);
-            }
-        }
-
-        // Since this event does not require the client to be moved elsewhere,
-        // attach it to the member's listener, so that its events are received
-        // afterwards.
-        member.listener.attach(client);
-    }
-
     async fn on_leave(host_client: &mut Client, guest: &mut Member<Guest>) {
         guest.secret = None;
-
         let _ = host_client.notify(Notification::OpponentLeave).await;
-
-        // Since the guest client has been moved from the listener before,
-        // there is no need to detach it.
-
     }
 
     async fn handle(
-        guest_client: Client,
+        mut guest_client: Client,
         host_client: &mut Client,
         result: ClientListenResult,
         guest: &mut Member<Self>,
     ) {
+        use Directive::*;
+
         match result {
-            Ok(event) => match event.kind {
-                EventKind::SetSecret => Self::on_set_secret(guest_client, guest, &event.data).await,
-                EventKind::Leave => {
+            Ok(directive) => match directive {
+                SetSecret { secret } => {
+                    let _ = guest_client.notify(Notification::SecretSet { secret: &secret }).await;
+                    guest.secret = Some(secret);
+                    guest.listener.attach(guest_client);
+                },
+                Leave => {
                     Self::on_leave(host_client, guest).await;
                     Idler::spawn(guest_client);
                 }
-                EventKind::CloseConnection => Self::on_leave(host_client, guest).await,
+                CloseConnection => Self::on_leave(host_client, guest).await,
                 _ => guest.listener.attach(guest_client),
             },
-            Err(ClientListenError::SocketStreamExhausted) => {
+            Err(ClientListenError::SocketExhausted) => {
                 Self::on_leave(host_client, guest).await
             }
             _ => guest.listener.attach(guest_client),
