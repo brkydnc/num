@@ -100,12 +100,6 @@ impl Lobby {
             // possibly connected guest along with the host. If there is a guest,
             // and the guest sends a directive, the future below will return
             // Some(result).
-            //
-            // The future accesses guest_client with a mutable reference, If the
-            // guest_client was moved, and the `host_client` handlers get executed,
-            // the handlers would try to access the guest_client via guest listener
-            // (self.guest.listener), and there would be no client in it, since
-            // it was moved.
             let guest_listen_future: OptionFuture<_> = self
                 .guest
                 .listener
@@ -113,8 +107,8 @@ impl Lobby {
                 .map(|client| client.listen())
                 .into();
 
-            // Here, the host_client has already been moved from its listener,
-            // and the guest_client will be moved if it is relevant.
+            // Here, the `host_client` has already been moved from its listener,
+            // and the `guest_client` will be moved if it is relevant.
             //
             // Handler functions will attach the clients to the appropriate listeners
             // if necessarry. So no need to attach them here by hand.
@@ -208,7 +202,6 @@ impl Host {
             let guest = Player::new(guest_client, guest.secret.take().unwrap());
 
             Game::spawn(host, guest);
-            warn!("Send start game notification to members and spawn without callback release mechanism");
         } else {
             host.listener.attach(client);
         }

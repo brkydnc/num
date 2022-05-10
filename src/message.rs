@@ -23,4 +23,6 @@ pub enum Notification<'a> {
     SecretSet { secret: &'a Secret },
     GuestJoin,
     OpponentLeave,
+    GameStart,
+    NextTurn,
 }

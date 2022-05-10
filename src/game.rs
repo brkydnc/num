@@ -3,7 +3,7 @@ use crate::{
         Client, ClientListenError, ClientListenResult, ClientListener, ClientListenerBundle,
         ClientListenerState,
     },
-    Directive, Idler, Secret,
+    Notification, Directive, Idler, Secret,
 };
 use log::debug;
 use tokio::{
@@ -34,7 +34,6 @@ impl Player {
         }
     }
 
-    // TODO: Notify leave.
     async fn on_leave(opponent: ClientListenerBundle<'_, Self>) {
         Idler::spawn(opponent.client);
     }
@@ -136,16 +135,27 @@ impl Game {
             guest,
             turn: Turn::new(20),
         };
+
         tokio::spawn(game.listen());
     }
 
     pub async fn listen(mut self) {
         debug!("Listening to player directives in a game");
 
+        let _ = tokio::join! {
+            self.host.client_mut().unwrap().notify(Notification::GameStart),
+            self.guest.client_mut().unwrap().notify(Notification::GameStart)
+        };
+
         while let (Some(mut host), Some(mut guest)) = (self.host.bundle(), self.guest.bundle()) {
             select! {
                 _ = self.turn.interval_tick() => {
                     self.turn.next();
+
+                    let _ = tokio::join! {
+                        host.client.notify(Notification::NextTurn),
+                        guest.client.notify(Notification::NextTurn),
+                    };
                 },
                 result = host.client.listen() => {
                     Player::handle(result, host, guest, self.turn.of_host(), &mut self.turn).await;
