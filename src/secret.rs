@@ -48,7 +48,7 @@ impl<'de> Deserialize<'de> for Secret {
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_u16(SecretVisitor)
+        deserializer.deserialize_u64(SecretVisitor)
     }
 }
 
