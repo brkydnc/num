@@ -1,4 +1,5 @@
 use crate::{
+    Notification,
     client::{Client, ClientListenError, ClientListenResult, ClientListener, ClientListenerState},
     event::{Event, EventKind},
     game::{Game, Player},
@@ -82,11 +83,10 @@ impl Lobby {
     async fn listen(mut self, mut receiver: Receiver<Client>) {
         debug!("Listening to member events in a lobby");
 
-        // Notify host
         let _ = self.host.listener
             .client_mut()
             .unwrap()
-            .emit(&Event::from(EventKind::CreateLobby).with(self.id.to_string()))
+            .notify(Notification::LobbyCreation { lobby_id: self.id })
             .await;
 
         // A lobby is guaranteed to have a host connected. Therefore the lobby
@@ -125,22 +125,19 @@ impl Lobby {
                     Guest::handle(guest_client, &mut host_client, result, &mut self.guest).await;
                     self.host.listener.attach(host_client);
                 }
-                Some(client) = receiver.recv() => {
+                Some(mut guest_client) = receiver.recv() => {
                     // If there is already a guest, spawn an idle handler for
                     // the incoming client.
                     if self.guest.listener.is_listening() {
-                        Idler::spawn(client);
+                        Idler::spawn(guest_client);
                         debug!("Guest join rejected, the lobby is full");
                     } else {
-                        // let guest_join_event = Event::from(EventKind::GuestJoin);
-                        // let notify_host = self.host.emit(&guest_join_event);
+                        let _ = tokio::join!{
+                            host_client .notify(Notification::GuestJoin),
+                            guest_client.notify(Notification::LobbyJoin { lobby_id: self.id }),
+                        };
 
-                        // let join_lobby_event = Event::from(EventKind::JoinLobby);
-                        // let notify_guest = client.emit(&join_lobby_event);
-
-                        // let _ = join!(notify_host, notify_guest);
-
-                        self.guest.listener.attach(client);
+                        self.guest.listener.attach(guest_client);
                         self.host.listener.attach(host_client);
 
                         debug!("Guest join accepted");
@@ -195,8 +192,8 @@ impl Host {
         // Parse the given string and set the new secret if possible.
         if let Some(string) = data.as_ref() {
             if let Some(secret) = Secret::parse(string) {
+                let _ = client.notify(Notification::SecretSet { secret: &secret }).await;
                 member.secret = Some(secret);
-                let _ = client.emit(&Event::from(EventKind::SetSecret)).await;
             }
         }
 
@@ -224,17 +221,14 @@ impl Host {
 
     async fn on_leave(host: &mut Member<Self>, guest: &mut Member<Guest>) {
         // When the host leaves, if there is a guest, the guest becomes the host.
-        if let Some(client) = guest.listener.take() {
+        if let Some(mut client) = guest.listener.take() {
+            let _ = client.notify(Notification::OpponentLeave).await;
+
             // Attach guest's listener to the host member.
             host.listener.attach(client);
 
             // Move guest's secret to the host.
             host.secret = guest.secret.take();
-
-            // The guest member is completely empty now.
-
-            warn!("Emit host leave to the guest");
-            // let _ = guest_client.emit(&Event::from(EventKind::OpponentLeave)).await;
         }
     }
 
@@ -282,8 +276,8 @@ impl Guest {
         // Parse the given string and set the new secret if possible.
         if let Some(string) = data.as_ref() {
             if let Some(secret) = Secret::parse(string) {
+                let _ = client.notify(Notification::SecretSet { secret: &secret }).await;
                 member.secret = Some(secret);
-                let _ = client.emit(&Event::from(EventKind::SetSecret)).await;
             }
         }
 
@@ -296,11 +290,11 @@ impl Guest {
     async fn on_leave(host_client: &mut Client, guest: &mut Member<Guest>) {
         guest.secret = None;
 
+        let _ = host_client.notify(Notification::OpponentLeave).await;
+
         // Since the guest client has been moved from the listener before,
         // there is no need to detach it.
 
-        warn!("Emit guest leave to the host");
-        // let _ = host_client.emit(&Event::from(EventKind::OpponentLeave)).await;
     }
 
     async fn handle(

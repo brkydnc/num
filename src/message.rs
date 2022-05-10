@@ -21,8 +21,8 @@ pub enum Directive {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 pub enum Notification<'a> {
-    // LobbyCreation { lobby_id: Id },
-    // LobbyJoin { lobby_id: Id },
+    LobbyCreation { lobby_id: Id },
+    LobbyJoin { lobby_id: Id },
     SecretSet { secret: &'a Secret },
     GuestJoin,
     OpponentLeave,

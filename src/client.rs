@@ -1,4 +1,5 @@
 use crate::event::{Event, EventKind};
+use crate::Notification;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::WebSocketStream;
@@ -37,8 +38,9 @@ impl Client {
         }
     }
 
-    pub async fn emit(&mut self, event: &Event) -> Result<(), TungsteniteError> {
-        let json = serde_json::to_string(event).expect("Couldn't parse event into json string");
+    pub async fn notify(&mut self, n: Notification<'_>) -> Result<(), TungsteniteError> {
+        let json = serde_json::to_string(&n)
+            .expect("Couldn't parse notification to json");
 
         self.socket.send(Message::Text(json)).await
     }
