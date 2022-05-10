@@ -1,7 +1,7 @@
 #![feature(once_cell)]
 #![feature(entry_insert)]
 
-use log::{info, debug};
+use log::{debug, info};
 use num::{client::Client, idler::Idler};
 use tokio::net::{TcpListener, TcpStream};
 

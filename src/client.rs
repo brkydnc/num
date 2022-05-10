@@ -27,7 +27,8 @@ impl Client {
     pub async fn listen(&mut self) -> ClientListenResult {
         use ClientListenError::*;
 
-        let message = self.socket
+        let message = self
+            .socket
             .next()
             .await
             .ok_or(SocketExhausted)?
@@ -41,8 +42,7 @@ impl Client {
     }
 
     pub async fn notify(&mut self, n: Notification<'_>) -> Result<(), TungsteniteError> {
-        let json = serde_json::to_string(&n)
-            .expect("Couldn't parse notification to json");
+        let json = serde_json::to_string(&n).expect("Couldn't parse notification to json");
 
         self.socket.send(Message::Text(json)).await
     }
@@ -88,8 +88,14 @@ pub trait ClientListener {
 
     /// If a client is being listened, returns the bundle of the client and a
     /// mutable reference to the listener, replaces the listener state with `Stop`.
-    fn bundle(&mut self) -> Option<ClientListenerBundle<Self>> where Self: Sized{
-        self.take().map(|client| ClientListenerBundle { listener: self, client })
+    fn bundle(&mut self) -> Option<ClientListenerBundle<Self>>
+    where
+        Self: Sized,
+    {
+        self.take().map(|client| ClientListenerBundle {
+            listener: self,
+            client,
+        })
     }
 
     /// If a client is being listened, this method returns a mutable reference

@@ -1,9 +1,8 @@
-use log::debug;
 use crate::{
-    Directive,
-    lobby::Lobby,
     client::{Client, ClientListenError, ClientListener, ClientListenerState},
+    Directive, Lobby,
 };
+use log::debug;
 
 pub struct Idler(ClientListenerState);
 

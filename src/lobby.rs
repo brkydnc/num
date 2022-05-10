@@ -1,12 +1,9 @@
 use crate::{
-    Directive, Notification,
     client::{Client, ClientListenError, ClientListenResult, ClientListener, ClientListenerState},
-    game::{Game, Player},
-    idler::Idler,
-    secret::Secret,
+    Directive, Game, Idler, Notification, Player, Secret,
 };
 use futures_util::future::OptionFuture;
-use log::{warn, debug};
+use log::{debug, warn};
 use std::{
     collections::HashMap,
     lazy::SyncLazy,
@@ -15,7 +12,10 @@ use std::{
         Arc, RwLock,
     },
 };
-use tokio::{select, sync::mpsc::{channel, Receiver, Sender}};
+use tokio::{
+    select,
+    sync::mpsc::{channel, Receiver, Sender},
+};
 
 pub type LobbyId = usize;
 type LobbyIndex = Arc<RwLock<HashMap<LobbyId, Sender<Client>>>>;
@@ -82,7 +82,9 @@ impl Lobby {
     async fn listen(mut self, mut receiver: Receiver<Client>) {
         debug!("Listening to member directives in a lobby");
 
-        let _ = self.host.listener
+        let _ = self
+            .host
+            .listener
             .client_mut()
             .unwrap()
             .notify(Notification::LobbyCreation { lobby_id: self.id })
@@ -189,7 +191,9 @@ impl Host {
     }
 
     async fn on_set_secret(mut client: Client, member: &mut Member<Self>, secret: Secret) {
-        let _ = client.notify(Notification::SecretSet { secret: &secret }).await;
+        let _ = client
+            .notify(Notification::SecretSet { secret: &secret })
+            .await;
         member.secret = Some(secret);
         member.listener.attach(client);
     }
@@ -281,10 +285,12 @@ impl Guest {
         match result {
             Ok(directive) => match directive {
                 SetSecret { secret } => {
-                    let _ = guest_client.notify(Notification::SecretSet { secret: &secret }).await;
+                    let _ = guest_client
+                        .notify(Notification::SecretSet { secret: &secret })
+                        .await;
                     guest.secret = Some(secret);
                     guest.listener.attach(guest_client);
-                },
+                }
                 Leave => {
                     Self::on_leave(host_client, guest).await;
                     Idler::spawn(guest_client);
@@ -292,9 +298,7 @@ impl Guest {
                 CloseConnection => Self::on_leave(host_client, guest).await,
                 _ => guest.listener.attach(guest_client),
             },
-            Err(ClientListenError::SocketExhausted) => {
-                Self::on_leave(host_client, guest).await
-            }
+            Err(ClientListenError::SocketExhausted) => Self::on_leave(host_client, guest).await,
             _ => guest.listener.attach(guest_client),
         }
     }

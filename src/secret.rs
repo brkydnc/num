@@ -1,9 +1,9 @@
-use std::num::NonZeroU16;
-use std::fmt::{Formatter, Result as FormatResult};
 use serde::{
+    de::{Deserialize, Deserializer, Error, Unexpected, Visitor},
     Serialize,
-    de::{Deserialize, Deserializer,Visitor, Error, Unexpected}
 };
+use std::fmt::{Formatter, Result as FormatResult};
+use std::num::NonZeroU16;
 
 #[derive(Debug, PartialEq, Serialize)]
 pub struct Secret(NonZeroU16);
@@ -82,7 +82,7 @@ impl Secret {
 #[cfg(test)]
 mod test {
     use super::*;
-    use serde_json::{json, from_value};
+    use serde_json::{from_value, json};
 
     macro_rules! rejects {
         ($($number:literal),*) => {
@@ -134,5 +134,4 @@ mod test {
             42 42 => 3 0
         }
     }
-
 }

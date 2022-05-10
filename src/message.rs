@@ -1,8 +1,5 @@
-use serde::{Serialize, Deserialize};
-use crate::{
-    lobby::LobbyId,
-    secret::Secret,
-};
+use crate::{LobbyId, Secret};
+use serde::{Deserialize, Serialize};
 
 #[non_exhaustive]
 #[derive(Debug, Deserialize)]

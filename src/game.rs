@@ -1,20 +1,14 @@
-use log::debug;
 use crate::{
-    Directive,
-    secret::Secret,
-    idler::Idler,
     client::{
-        Client,
-        ClientListenError,
+        Client, ClientListenError, ClientListenResult, ClientListener, ClientListenerBundle,
         ClientListenerState,
-        ClientListener,
-        ClientListenResult,
-        ClientListenerBundle
     },
+    Directive, Idler, Secret,
 };
+use log::debug;
 use tokio::{
     select,
-    time::{interval, Interval, Duration},
+    time::{interval, Duration, Interval},
 };
 
 pub struct Player {
@@ -56,7 +50,7 @@ impl Player {
         match result {
             Ok(directive) => {
                 match directive {
-                    Guess { secret }=> {
+                    Guess { secret } => {
                         if !can_guess {
                             player.reunite();
                             opponent.reunite();
@@ -64,8 +58,7 @@ impl Player {
                         }
 
                         // TODO: Notify guesses
-                        let (correct, _wrong) = player.listener.secret
-                            .score(&secret);
+                        let (correct, _wrong) = player.listener.secret.score(&secret);
 
                         // The winner is the host
                         if correct == 3 {
@@ -138,7 +131,11 @@ pub struct Game {
 
 impl Game {
     pub fn spawn(host: Player, guest: Player) {
-        let game = Self { host, guest, turn: Turn::new(20) };
+        let game = Self {
+            host,
+            guest,
+            turn: Turn::new(20),
+        };
         tokio::spawn(game.listen());
     }
 
