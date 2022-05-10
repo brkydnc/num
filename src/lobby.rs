@@ -17,13 +17,13 @@ use std::{
 };
 use tokio::{select, sync::mpsc::{channel, Receiver, Sender}};
 
-pub type Id = usize;
-type LobbyIndex = Arc<RwLock<HashMap<Id, Sender<Client>>>>;
+pub type LobbyId = usize;
+type LobbyIndex = Arc<RwLock<HashMap<LobbyId, Sender<Client>>>>;
 
 static LOBBIES: SyncLazy<LobbyIndex> = SyncLazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 pub struct Lobby {
-    id: Id,
+    id: LobbyId,
     host: Member<Host>,
     guest: Member<Guest>,
 }
@@ -39,7 +39,7 @@ impl Lobby {
         }
     }
 
-    pub async fn send(id: Id, client: Client) {
+    pub async fn send(id: LobbyId, client: Client) {
         // Try to acquire the Sender of the lobby of the corresponding id.
         let client_sender = {
             LOBBIES

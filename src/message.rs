@@ -1,6 +1,6 @@
 use serde::{Serialize, Deserialize};
 use crate::{
-    lobby::Id,
+    lobby::LobbyId,
     secret::Secret,
 };
 
@@ -10,7 +10,7 @@ use crate::{
 pub enum Directive {
     CloseConnection,
     CreateLobby,
-    JoinLobby { lobby_id: Id },
+    JoinLobby { lobby_id: LobbyId },
     Leave,
     SetSecret { secret: Secret },
     StartGame,
@@ -21,8 +21,8 @@ pub enum Directive {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 pub enum Notification<'a> {
-    LobbyCreation { lobby_id: Id },
-    LobbyJoin { lobby_id: Id },
+    LobbyCreation { lobby_id: LobbyId },
+    LobbyJoin { lobby_id: LobbyId },
     SecretSet { secret: &'a Secret },
     GuestJoin,
     OpponentLeave,
