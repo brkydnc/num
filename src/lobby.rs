@@ -86,7 +86,7 @@ impl Lobby {
             .host
             .client_mut()
             .unwrap()
-            .notify(Notification::LobbyCreation { lobby_id: self.id })
+            .notify(Notification::LobbyCreate { lobby_id: self.id })
             .await;
 
         // A lobby is guaranteed to have a host connected. Therefore the lobby
