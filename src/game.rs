@@ -34,14 +34,16 @@ impl Player {
         }
     }
 
-    async fn on_leave(opponent: Bundle<'_, Self>) {
+    async fn on_leave(mut opponent: Bundle<'_, Self>) {
+        // Notify the opponent that the player has left.
+        let _ = opponent.client.notify(Notification::OpponentLeave).await;
         Idler::spawn(opponent.client);
     }
 
     async fn handle(
         result: ListenResult,
-        player: Bundle<'_, Self>,
-        opponent: Bundle<'_, Self>,
+        mut player: Bundle<'_, Self>,
+        mut opponent: Bundle<'_, Self>,
         can_guess: bool,
         turn: &mut Turn,
     ) {
@@ -56,17 +58,21 @@ impl Player {
                             return;
                         }
 
-                        // TODO: Notify guesses
-                        let (correct, _wrong) = player.listener.secret.score(&secret);
+                        let (correct, wrong) = player.listener.secret.score(&secret);
 
-                        // The winner is the host
                         if correct == 3 {
+                            let _ = tokio::join! {
+                                player.client.notify(Notification::Win),
+                                opponent.client.notify(Notification::Lose)
+                            };
+
                             Idler::spawn(player.client);
                             Idler::spawn(opponent.client);
-                            return;
+                        } else {
+                            let notification = Notification::GuessScore { correct, wrong };
+                            let _ = player.client.notify(notification).await;
+                            turn.next();
                         }
-
-                        turn.next();
                     }
                     Leave => {
                         Idler::spawn(player.client);
