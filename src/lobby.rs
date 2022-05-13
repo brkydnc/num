@@ -1,5 +1,5 @@
 use crate::{
-    client::{Client, ClientListenError, ClientListenResult, ClientListener, ClientListenerState},
+    client::{Client, ClientListenError, ClientListenResult, ClientListener, ClientListenerState, ClientListenerBundle},
     Directive, Game, Idler, Notification, Player, Secret,
 };
 use futures_util::future::OptionFuture;
@@ -24,8 +24,8 @@ static LOBBIES: SyncLazy<LobbyIndex> = SyncLazy::new(|| Arc::new(RwLock::new(Has
 
 pub struct Lobby {
     id: LobbyId,
-    host: Member<Host>,
-    guest: Member<Guest>,
+    host: Host,
+    guest: Guest,
 }
 
 impl Lobby {
@@ -34,8 +34,8 @@ impl Lobby {
 
         Self {
             id: ID.fetch_add(1, Ordering::Relaxed),
-            host: Member::new(Host::new(creator)),
-            guest: Member::new(Guest::new()),
+            host: Host::new(creator),
+            guest: Guest::new(),
         }
     }
 
@@ -84,7 +84,6 @@ impl Lobby {
 
         let _ = self
             .host
-            .listener
             .client_mut()
             .unwrap()
             .notify(Notification::LobbyCreation { lobby_id: self.id })
@@ -93,7 +92,7 @@ impl Lobby {
         // A lobby is guaranteed to have a host connected. Therefore the lobby
         // task must live as long as the host is being listened. A `while let`
         // is handy for this case.
-        while let Some(mut host_client) = self.host.listener.take() {
+        while let Some(mut host) = self.host.bundle() {
             // A guest may or may not to be connected. Also, a guest must be
             // listened with a host concurrently. Thus, they must be put into the
             // same select body. The `OptionFuture` utility allows listening a
@@ -102,7 +101,6 @@ impl Lobby {
             // Some(result).
             let guest_listen_future: OptionFuture<_> = self
                 .guest
-                .listener
                 .client_mut()
                 .map(|client| client.listen())
                 .into();
@@ -113,28 +111,28 @@ impl Lobby {
             // Handler functions will attach the clients to the appropriate listeners
             // if necessarry. So no need to attach them here by hand.
             select! {
-                result = host_client.listen() => {
-                    Host::handle(host_client, result, &mut self.host, &mut self.guest).await;
+                result = host.client.listen() => {
+                    Host::handle(result, host, &mut self.guest).await;
                 }
                 Some(result) = guest_listen_future => {
-                    let guest_client = self.guest.listener.take().unwrap();
-                    Guest::handle(guest_client, &mut host_client, result, &mut self.guest).await;
-                    self.host.listener.attach(host_client);
+                    let guest_bundle = self.guest.bundle().unwrap();
+                    Guest::handle(result, guest_bundle, &mut host.client).await;
+                    host.reunite();
                 }
-                Some(mut guest_client) = receiver.recv() => {
+                Some(mut client) = receiver.recv() => {
                     // If there is already a guest, spawn an idle handler for
                     // the incoming client.
-                    if self.guest.listener.is_listening() {
-                        Idler::spawn(guest_client);
+                    if self.guest.is_listening() {
+                        Idler::spawn(client);
                         debug!("Guest join rejected, the lobby is full");
                     } else {
                         let _ = tokio::join!{
-                            host_client .notify(Notification::GuestJoin),
-                            guest_client.notify(Notification::LobbyJoin { lobby_id: self.id }),
+                            host.client.notify(Notification::GuestJoin),
+                            client.notify(Notification::LobbyJoin { lobby_id: self.id }),
                         };
 
-                        self.guest.listener.attach(guest_client);
-                        self.host.listener.attach(host_client);
+                        self.guest.attach(client);
+                        host.reunite();
 
                         debug!("Guest join accepted");
                     }
@@ -153,67 +151,51 @@ impl Lobby {
     }
 }
 
-struct Member<L: ClientListener> {
-    listener: L,
+struct Host {
+    state: ClientListenerState,
     secret: Option<Secret>,
 }
 
-impl<L: ClientListener> Member<L> {
-    fn new(listener: L) -> Self {
-        Self {
-            listener,
-            secret: None,
-        }
-    }
-}
-
-struct Host(ClientListenerState);
-
 impl ClientListener for Host {
     fn state(&self) -> &ClientListenerState {
-        &self.0
+        &self.state
     }
 
     fn state_mut(&mut self) -> &mut ClientListenerState {
-        &mut self.0
+        &mut self.state
     }
 }
 
 impl Host {
     fn new(client: Client) -> Self {
-        Self(ClientListenerState::Listen(client))
+        Self {
+            state: ClientListenerState::Listen(client),
+            secret: None,
+        }
     }
 
-    async fn on_set_secret(mut client: Client, member: &mut Member<Self>, secret: Secret) {
-        let _ = client
-            .notify(Notification::SecretSet { secret: &secret })
-            .await;
-        member.secret = Some(secret);
-        member.listener.attach(client);
-    }
-
-    async fn on_start_game(client: Client, host: &mut Member<Self>, guest: &mut Member<Guest>) {
-        if !(host.secret.is_some() && guest.secret.is_some()) {
-            return host.listener.attach(client);
+    async fn on_start_game(host: ClientListenerBundle<'_, Self>, guest: &mut Guest) {
+        if !(host.listener.secret.is_some() && guest.secret.is_some()) {
+            return host.reunite();
         }
 
-        if let Some(guest_client) = guest.listener.take() {
-            let host = Player::new(client, host.secret.take().unwrap());
+        if let Some(guest_client) = guest.take() {
+            let host = Player::new(host.client, host.listener.secret.take().unwrap());
             let guest = Player::new(guest_client, guest.secret.take().unwrap());
 
             Game::spawn(host, guest);
         } else {
-            host.listener.attach(client);
+            host.reunite();
         }
     }
 
-    async fn on_leave(host: &mut Member<Self>, guest: &mut Member<Guest>) {
+    async fn on_leave(host: &mut Self, guest: &mut Guest) {
         // When the host leaves, if there is a guest, the guest becomes the host.
-        if let Some(mut client) = guest.listener.take() {
+        if let Some(mut client) = guest.take() {
             let _ = client.notify(Notification::OpponentLeave).await;
 
             // Attach guest's listener to the host member.
-            host.listener.attach(client);
+            host.attach(client);
 
             // Move guest's secret to the host.
             host.secret = guest.secret.take();
@@ -221,78 +203,90 @@ impl Host {
     }
 
     async fn handle(
-        client: Client,
         result: ClientListenResult,
-        host: &mut Member<Self>,
-        guest: &mut Member<Guest>,
-    ) {
-        use Directive::*;
-
-        match result {
-            Ok(directive) => match directive {
-                SetSecret { secret } => Self::on_set_secret(client, host, secret).await,
-                StartGame => Self::on_start_game(client, host, guest).await,
-                Leave => {
-                    Self::on_leave(host, guest).await;
-                    Idler::spawn(client);
-                }
-                CloseConnection => Self::on_leave(host, guest).await,
-                _ => host.listener.attach(client),
-            },
-            Err(ClientListenError::SocketExhausted) => Self::on_leave(host, guest).await,
-            _ => host.listener.attach(client),
-        }
-    }
-}
-
-struct Guest(ClientListenerState);
-
-impl ClientListener for Guest {
-    fn state(&self) -> &ClientListenerState {
-        &self.0
-    }
-
-    fn state_mut(&mut self) -> &mut ClientListenerState {
-        &mut self.0
-    }
-}
-
-impl Guest {
-    fn new() -> Self {
-        Self(ClientListenerState::Stop)
-    }
-
-    async fn on_leave(host_client: &mut Client, guest: &mut Member<Guest>) {
-        guest.secret = None;
-        let _ = host_client.notify(Notification::OpponentLeave).await;
-    }
-
-    async fn handle(
-        mut guest_client: Client,
-        host_client: &mut Client,
-        result: ClientListenResult,
-        guest: &mut Member<Self>,
+        mut host: ClientListenerBundle<'_, Self>,
+        guest: &mut Guest,
     ) {
         use Directive::*;
 
         match result {
             Ok(directive) => match directive {
                 SetSecret { secret } => {
-                    let _ = guest_client
+                    let _ = host.client
                         .notify(Notification::SecretSet { secret: &secret })
                         .await;
-                    guest.secret = Some(secret);
-                    guest.listener.attach(guest_client);
+
+                    host.listener.secret = Some(secret);
+                    host.reunite();
+                }
+                StartGame => Self::on_start_game(host, guest).await,
+                Leave => {
+                    Self::on_leave(host.listener, guest).await;
+                    Idler::spawn(host.client);
+                }
+                CloseConnection => Self::on_leave(host.listener, guest).await,
+                _ => host.reunite(),
+            },
+            Err(ClientListenError::SocketExhausted) => Self::on_leave(host.listener, guest).await,
+            _ => host.reunite(),
+        }
+    }
+}
+
+struct Guest {
+    state: ClientListenerState,
+    secret: Option<Secret>,
+}
+
+impl ClientListener for Guest {
+    fn state(&self) -> &ClientListenerState {
+        &self.state
+    }
+
+    fn state_mut(&mut self) -> &mut ClientListenerState {
+        &mut self.state
+    }
+}
+
+impl Guest {
+    fn new() -> Self {
+        Self {
+            state: ClientListenerState::Stop,
+            secret: None,
+        }
+    }
+
+    async fn on_leave(guest: &mut Self, host_client: &mut Client) {
+        guest.secret = None;
+        let _ = host_client.notify(Notification::OpponentLeave).await;
+    }
+
+    async fn handle(
+        result: ClientListenResult,
+        mut guest: ClientListenerBundle<'_, Self>,
+        host: &mut Client,
+    ) {
+        use Directive::*;
+
+        match result {
+            Ok(directive) => match directive {
+                SetSecret { secret } => {
+                    let _ = guest.client
+                        .notify(Notification::SecretSet { secret: &secret })
+                        .await;
+
+                    guest.listener.secret = Some(secret);
+                    guest.reunite();
                 }
                 Leave => {
-                    Self::on_leave(host_client, guest).await;
-                    Idler::spawn(guest_client);
+                    Self::on_leave(guest.listener, host).await;
+                    Idler::spawn(guest.client);
                 }
-                CloseConnection => Self::on_leave(host_client, guest).await,
-                _ => guest.listener.attach(guest_client),
+                CloseConnection => Self::on_leave(guest.listener, host).await,
+                _ => guest.reunite(),
             },
-            Err(ClientListenError::SocketExhausted) => Self::on_leave(host_client, guest).await,
-            _ => guest.listener.attach(guest_client),
+            Err(ClientListenError::SocketExhausted) => Self::on_leave(guest.listener, host).await,
+            _ => guest.reunite(),
         }
     }
 }
