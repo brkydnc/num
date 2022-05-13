@@ -4,7 +4,7 @@ use tokio::net::TcpStream;
 use tokio_tungstenite::WebSocketStream;
 use tungstenite::{Error as TungsteniteError, Message};
 
-pub type ClientListenResult = Result<Directive, ClientListenError>;
+pub type ListenResult = Result<Directive, ListenError>;
 
 // TODO: The `WebSocket` type is about 300 bytes. And the code has a lot of
 // move semantics. Maybe it is better putting the inner socket behind a `Box`.
@@ -12,7 +12,7 @@ pub struct Client {
     socket: WebSocketStream<TcpStream>,
 }
 
-pub enum ClientListenError {
+pub enum ListenError {
     SocketExhausted,
     InvalidMessage,
     UnknownMessage,
@@ -24,8 +24,8 @@ impl Client {
         Self { socket }
     }
 
-    pub async fn listen(&mut self) -> ClientListenResult {
-        use ClientListenError::*;
+    pub async fn listen(&mut self) -> ListenResult {
+        use ListenError::*;
 
         let message = self
             .socket
@@ -52,47 +52,47 @@ impl Client {
 ///
 /// The purpose of this enum is to wrap a client like an `Option` does, and to
 /// be used in the contextes which involve listening to a `Client`.
-pub enum ClientListenerState {
+pub enum ListenerState {
     Listen(Client),
     Stop,
 }
 
-/// A utility interface for manuplating the types that contain `ClientListenerState`.
-pub trait ClientListener {
-    /// Returns a reference to the inner ClientListenerState.
-    fn state(&self) -> &ClientListenerState;
+/// A utility interface for manuplating the types that contain `ListenerState`.
+pub trait Listener {
+    /// Returns a reference to the inner ListenerState.
+    fn state(&self) -> &ListenerState;
 
-    /// Returns a mutable reference to the inner ClientListenerState.
-    fn state_mut(&mut self) -> &mut ClientListenerState;
+    /// Returns a mutable reference to the inner ListenerState.
+    fn state_mut(&mut self) -> &mut ListenerState;
 
     /// Return true if the state is `Listen(Client)`
     fn is_listening(&self) -> bool {
-        matches!(self.state(), ClientListenerState::Listen(_))
+        matches!(self.state(), ListenerState::Listen(_))
     }
 
     /// Wraps the new client with `Listen`, drops the old one if it exists.
     fn attach(&mut self, client: Client) {
-        let _ = std::mem::replace(self.state_mut(), ClientListenerState::Listen(client));
+        let _ = std::mem::replace(self.state_mut(), ListenerState::Listen(client));
     }
 
     /// Returns the current client if the current state is `Listen(Client)`,
     /// and replaces the state with `Stop`.
     fn take(&mut self) -> Option<Client> {
-        let state = std::mem::replace(self.state_mut(), ClientListenerState::Stop);
+        let state = std::mem::replace(self.state_mut(), ListenerState::Stop);
 
         match state {
-            ClientListenerState::Listen(client) => Some(client),
-            ClientListenerState::Stop => None,
+            ListenerState::Listen(client) => Some(client),
+            ListenerState::Stop => None,
         }
     }
 
     /// If a client is being listened, returns the bundle of the client and a
     /// mutable reference to the listener, replaces the listener state with `Stop`.
-    fn bundle(&mut self) -> Option<ClientListenerBundle<Self>>
+    fn bundle(&mut self) -> Option<Bundle<Self>>
     where
         Self: Sized,
     {
-        self.take().map(|client| ClientListenerBundle {
+        self.take().map(|client| Bundle {
             listener: self,
             client,
         })
@@ -102,8 +102,8 @@ pub trait ClientListener {
     /// to the client.
     fn client_mut(&mut self) -> Option<&mut Client> {
         match self.state_mut() {
-            ClientListenerState::Listen(client) => Some(client),
-            ClientListenerState::Stop => None,
+            ListenerState::Listen(client) => Some(client),
+            ListenerState::Stop => None,
         }
     }
 }
@@ -111,12 +111,12 @@ pub trait ClientListener {
 /// Bundles a client with its listener. Since the client is moved into the bundle,
 /// the state of the listener is `Stop`. Later the client can be attached to the
 /// listener again.
-pub struct ClientListenerBundle<'l, L: ClientListener> {
+pub struct Bundle<'l, L: Listener> {
     pub listener: &'l mut L,
     pub client: Client,
 }
 
-impl<L: ClientListener> ClientListenerBundle<'_, L> {
+impl<L: Listener> Bundle<'_, L> {
     /// Attaches the client to the listener.
     pub fn reunite(self) {
         self.listener.attach(self.client);

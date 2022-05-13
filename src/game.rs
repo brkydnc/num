@@ -1,7 +1,7 @@
 use crate::{
     client::{
-        Client, ClientListenError, ClientListenResult, ClientListener, ClientListenerBundle,
-        ClientListenerState,
+        Client, ListenError, ListenResult, Listener, Bundle,
+        ListenerState,
     },
     Notification, Directive, Idler, Secret,
 };
@@ -12,16 +12,16 @@ use tokio::{
 };
 
 pub struct Player {
-    state: ClientListenerState,
+    state: ListenerState,
     pub(self) secret: Secret,
 }
 
-impl ClientListener for Player {
-    fn state(&self) -> &ClientListenerState {
+impl Listener for Player {
+    fn state(&self) -> &ListenerState {
         &self.state
     }
 
-    fn state_mut(&mut self) -> &mut ClientListenerState {
+    fn state_mut(&mut self) -> &mut ListenerState {
         &mut self.state
     }
 }
@@ -29,19 +29,19 @@ impl ClientListener for Player {
 impl Player {
     pub fn new(client: Client, secret: Secret) -> Self {
         Self {
-            state: ClientListenerState::Listen(client),
+            state: ListenerState::Listen(client),
             secret,
         }
     }
 
-    async fn on_leave(opponent: ClientListenerBundle<'_, Self>) {
+    async fn on_leave(opponent: Bundle<'_, Self>) {
         Idler::spawn(opponent.client);
     }
 
     async fn handle(
-        result: ClientListenResult,
-        player: ClientListenerBundle<'_, Self>,
-        opponent: ClientListenerBundle<'_, Self>,
+        result: ListenResult,
+        player: Bundle<'_, Self>,
+        opponent: Bundle<'_, Self>,
         can_guess: bool,
         turn: &mut Turn,
     ) {
@@ -81,7 +81,7 @@ impl Player {
                     }
                 }
             }
-            Err(ClientListenError::SocketExhausted) => {
+            Err(ListenError::SocketExhausted) => {
                 Self::on_leave(opponent).await;
             }
             _ => {

@@ -1,24 +1,24 @@
 use crate::{
-    client::{Client, ClientListenError, ClientListener, ClientListenerState},
+    client::{Client, ListenError, Listener, ListenerState},
     Directive, Lobby,
 };
 use log::debug;
 
-pub struct Idler(ClientListenerState);
+pub struct Idler(ListenerState);
 
-impl ClientListener for Idler {
-    fn state(&self) -> &ClientListenerState {
+impl Listener for Idler {
+    fn state(&self) -> &ListenerState {
         &self.0
     }
 
-    fn state_mut(&mut self) -> &mut ClientListenerState {
+    fn state_mut(&mut self) -> &mut ListenerState {
         &mut self.0
     }
 }
 
 impl Idler {
     pub fn spawn(client: Client) {
-        let listener = Self(ClientListenerState::Listen(client));
+        let listener = Self(ListenerState::Listen(client));
         tokio::spawn(listener.listen());
     }
 
@@ -44,7 +44,7 @@ impl Idler {
 
                 // Cannot read the socket, the state remains `Stop`,
                 // so the client gets dropped.
-                Err(ClientListenError::SocketExhausted) => {}
+                Err(ListenError::SocketExhausted) => {}
 
                 // Continue listening
                 _ => self.attach(client),

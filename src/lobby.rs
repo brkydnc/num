@@ -1,5 +1,5 @@
 use crate::{
-    client::{Client, ClientListenError, ClientListenResult, ClientListener, ClientListenerState, ClientListenerBundle},
+    client::{Client, ListenError, ListenResult, Listener, ListenerState, Bundle},
     Directive, Game, Idler, Notification, Player, Secret,
 };
 use futures_util::future::OptionFuture;
@@ -152,16 +152,16 @@ impl Lobby {
 }
 
 struct Host {
-    state: ClientListenerState,
+    state: ListenerState,
     secret: Option<Secret>,
 }
 
-impl ClientListener for Host {
-    fn state(&self) -> &ClientListenerState {
+impl Listener for Host {
+    fn state(&self) -> &ListenerState {
         &self.state
     }
 
-    fn state_mut(&mut self) -> &mut ClientListenerState {
+    fn state_mut(&mut self) -> &mut ListenerState {
         &mut self.state
     }
 }
@@ -169,12 +169,12 @@ impl ClientListener for Host {
 impl Host {
     fn new(client: Client) -> Self {
         Self {
-            state: ClientListenerState::Listen(client),
+            state: ListenerState::Listen(client),
             secret: None,
         }
     }
 
-    async fn on_start_game(host: ClientListenerBundle<'_, Self>, guest: &mut Guest) {
+    async fn on_start_game(host: Bundle<'_, Host>, guest: &mut Guest) {
         if !(host.listener.secret.is_some() && guest.secret.is_some()) {
             return host.reunite();
         }
@@ -189,7 +189,7 @@ impl Host {
         }
     }
 
-    async fn on_leave(host: &mut Self, guest: &mut Guest) {
+    async fn on_leave(host: &mut Host, guest: &mut Guest) {
         // When the host leaves, if there is a guest, the guest becomes the host.
         if let Some(mut client) = guest.take() {
             let _ = client.notify(Notification::OpponentLeave).await;
@@ -203,8 +203,8 @@ impl Host {
     }
 
     async fn handle(
-        result: ClientListenResult,
-        mut host: ClientListenerBundle<'_, Self>,
+        result: ListenResult,
+        mut host: Bundle<'_, Host>,
         guest: &mut Guest,
     ) {
         use Directive::*;
@@ -227,23 +227,23 @@ impl Host {
                 CloseConnection => Self::on_leave(host.listener, guest).await,
                 _ => host.reunite(),
             },
-            Err(ClientListenError::SocketExhausted) => Self::on_leave(host.listener, guest).await,
+            Err(ListenError::SocketExhausted) => Self::on_leave(host.listener, guest).await,
             _ => host.reunite(),
         }
     }
 }
 
 struct Guest {
-    state: ClientListenerState,
+    state: ListenerState,
     secret: Option<Secret>,
 }
 
-impl ClientListener for Guest {
-    fn state(&self) -> &ClientListenerState {
+impl Listener for Guest {
+    fn state(&self) -> &ListenerState {
         &self.state
     }
 
-    fn state_mut(&mut self) -> &mut ClientListenerState {
+    fn state_mut(&mut self) -> &mut ListenerState {
         &mut self.state
     }
 }
@@ -251,19 +251,19 @@ impl ClientListener for Guest {
 impl Guest {
     fn new() -> Self {
         Self {
-            state: ClientListenerState::Stop,
+            state: ListenerState::Stop,
             secret: None,
         }
     }
 
-    async fn on_leave(guest: &mut Self, host_client: &mut Client) {
+    async fn on_leave(guest: &mut Guest, host: &mut Client) {
         guest.secret = None;
-        let _ = host_client.notify(Notification::OpponentLeave).await;
+        let _ = host.notify(Notification::OpponentLeave).await;
     }
 
     async fn handle(
-        result: ClientListenResult,
-        mut guest: ClientListenerBundle<'_, Self>,
+        result: ListenResult,
+        mut guest: Bundle<'_, Guest>,
         host: &mut Client,
     ) {
         use Directive::*;
@@ -285,7 +285,7 @@ impl Guest {
                 CloseConnection => Self::on_leave(guest.listener, host).await,
                 _ => guest.reunite(),
             },
-            Err(ClientListenError::SocketExhausted) => Self::on_leave(guest.listener, host).await,
+            Err(ListenError::SocketExhausted) => Self::on_leave(guest.listener, host).await,
             _ => guest.reunite(),
         }
     }
