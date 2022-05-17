@@ -48,12 +48,13 @@ impl Player {
         turn: &mut Turn,
     ) {
         use Directive::*;
+
         match result {
             Ok(directive) => {
                 match directive {
                     Guess { secret } => {
                         if can_guess {
-                            let (correct, wrong) = player.listener.secret.score(&secret);
+                            let (correct, wrong) = opponent.listener.secret.score(&secret);
 
                             if correct == 3 {
                                 let _ = tokio::join! {
