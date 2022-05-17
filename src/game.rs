@@ -52,27 +52,28 @@ impl Player {
             Ok(directive) => {
                 match directive {
                     Guess { secret } => {
-                        if !can_guess {
-                            player.reunite();
-                            opponent.reunite();
-                            return;
+                        if can_guess {
+                            let (correct, wrong) = player.listener.secret.score(&secret);
+
+                            if correct == 3 {
+                                let _ = tokio::join! {
+                                    player.client.notify(Notification::Win),
+                                    opponent.client.notify(Notification::Lose)
+                                };
+
+                                Idler::spawn(player.client);
+                                Idler::spawn(opponent.client);
+
+                                return;
+                            } else {
+                                let notification = Notification::GuessScore { correct, wrong };
+                                let _ = player.client.notify(notification).await;
+                                turn.next();
+                            }
                         }
 
-                        let (correct, wrong) = player.listener.secret.score(&secret);
-
-                        if correct == 3 {
-                            let _ = tokio::join! {
-                                player.client.notify(Notification::Win),
-                                opponent.client.notify(Notification::Lose)
-                            };
-
-                            Idler::spawn(player.client);
-                            Idler::spawn(opponent.client);
-                        } else {
-                            let notification = Notification::GuessScore { correct, wrong };
-                            let _ = player.client.notify(notification).await;
-                            turn.next();
-                        }
+                        player.reunite();
+                        opponent.reunite();
                     }
                     Leave => {
                         Idler::spawn(player.client);
@@ -162,6 +163,9 @@ impl Game {
                         host.client.notify(Notification::NextTurn),
                         guest.client.notify(Notification::NextTurn),
                     };
+
+                    host.reunite();
+                    guest.reunite();
                 },
                 result = host.client.listen() => {
                     Player::handle(result, host, guest, self.turn.of_host(), &mut self.turn).await;
