@@ -159,9 +159,10 @@ impl Game {
                 _ = self.turn.interval_tick() => {
                     self.turn.next();
 
-                    let _ = tokio::join! {
-                        host.client.notify(Notification::NextTurn),
-                        guest.client.notify(Notification::NextTurn),
+                    let _ = if self.turn.of_host() {
+                        host.client.notify(Notification::NextTurn).await
+                    } else {
+                        guest.client.notify(Notification::NextTurn).await
                     };
 
                     host.reunite();
