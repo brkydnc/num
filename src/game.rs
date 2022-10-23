@@ -13,7 +13,7 @@ use tokio::{
 
 pub struct Player {
     state: ListenerState,
-    pub(self) secret: Secret,
+    secret: Secret,
 }
 
 impl Listener for Player {
@@ -67,8 +67,15 @@ impl Player {
 
                                 return;
                             } else {
-                                let notification = Notification::GuessScore { correct, wrong };
-                                let _ = player.client.notify(notification).await;
+                                let _ = tokio::join! {
+                                    opponent.client.notify(Notification::NextTurn),
+                                    player.client.notify(Notification::GuessScore {
+                                        secret: &secret,
+                                        correct,
+                                        wrong
+                                    }),
+                                };
+
                                 turn.next();
                             }
                         }
@@ -115,6 +122,7 @@ impl Turn {
 
     fn next(&mut self) {
         self.record = !self.record;
+        self.interval.reset();
     }
 
     fn of_host(&self) -> bool {

@@ -25,7 +25,7 @@ pub enum Notification<'a> {
     OpponentLeave,
     GameStart,
     NextTurn,
-    GuessScore { correct: u8, wrong: u8 },
+    GuessScore { secret: &'a Secret, correct: u8, wrong: u8 },
     Win,
     Lose
 }

@@ -13,7 +13,7 @@ async fn handle_new_connection(tcp_stream: TcpStream) {
     }
 }
 
-const ADDRESS: &'static str = "127.0.0.1:7878";
+const ADDRESS: &'static str = "0.0.0.0:7878";
 
 #[tokio::main]
 async fn main() {
