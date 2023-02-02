@@ -6,7 +6,7 @@ use futures_util::future::OptionFuture;
 use log::{debug, warn};
 use std::{
     collections::HashMap,
-    lazy::SyncLazy,
+    sync::LazyLock,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, RwLock,
@@ -20,7 +20,7 @@ use tokio::{
 pub type LobbyId = usize;
 type LobbyIndex = Arc<RwLock<HashMap<LobbyId, Sender<Client>>>>;
 
-static LOBBIES: SyncLazy<LobbyIndex> = SyncLazy::new(|| Arc::new(RwLock::new(HashMap::new())));
+static LOBBIES: LazyLock<LobbyIndex> = LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 pub struct Lobby {
     id: LobbyId,
